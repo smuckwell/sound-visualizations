@@ -6,34 +6,48 @@ from matplotlib.animation import FuncAnimation
 from scipy.fft import fft, fftfreq
 from mpl_toolkits.mplot3d import Axes3D
 
-# Seed prompt
-# I need help writing some software using Python.
-# I would like to capture the audio picked up by the microphone of this device. I would like to display the spectrum captured as it changes over time so it probably needs to be saved to some kind of internal array. The displayed plot should be a surface, using the turbo color map. I would like the displayed frequencies to be limited, between 20 hz and 5000 hz. I would like the plot to continuously rotate smoothly about the Z axis, with the rotation speed changing corresponding to the current dominant frequency. I would like the animation of the surface changing and rotation to be very smooth, so use techniques that can improve the display characteristics.
-
 # Audio configuration
-SAMPLE_RATE = 44100  # 44.1 kHz
-CHUNK = 1024  # Number of audio samples per frame
-FREQ_LIMIT_LOW = 20  # Frequency limit for the plot (Hz)
-FREQ_LIMIT_HIGH = 5000  # Frequency limit for the plot (Hz)
+SAMPLE_RATE = 44100
+CHUNK = 1024
+FREQ_LIMIT_LOW = 20
+FREQ_LIMIT_HIGH = 5000
+HISTORY_SIZE = 100
+SAVE_COUNT = 100  # Number of frames to keep in memory
 
 # PyAudio initialization
 audio = pyaudio.PyAudio()
-stream = audio.open(format=pyaudio.paFloat32,
-                    channels=1,
-                    rate=SAMPLE_RATE,
-                    input=True,
-                    frames_per_buffer=CHUNK)
+stream = audio.open(
+    format=pyaudio.paFloat32,
+    channels=1,
+    rate=SAMPLE_RATE,
+    input=True,
+    frames_per_buffer=CHUNK,
+    input_device_index=None
+)
 
-# Set up figure and 3D plot
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-x = np.linspace(0, 1, CHUNK // 2)
-y = np.linspace(0, 1, 100)  # We'll maintain history of 100 frames
+# Calculate frequency mask once
+freqs = fftfreq(CHUNK, 1 / SAMPLE_RATE)[:CHUNK // 2]
+freq_mask = (freqs >= FREQ_LIMIT_LOW) & (freqs <= FREQ_LIMIT_HIGH)
+filtered_freqs = freqs[freq_mask]
+n_freqs = len(filtered_freqs)
+
+# Pre-calculate the meshgrid
+x = np.linspace(0, 1, n_freqs)
+y = np.linspace(0, 1, HISTORY_SIZE)
 x, y = np.meshgrid(x, y)
-z = np.zeros_like(x)
-surface = ax.plot_surface(x, y, z, cmap='turbo')
 
-# Set axis labels
+# Initialize the plot
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+
+# Initialize the z data
+z = np.zeros((HISTORY_SIZE, n_freqs))
+
+# Create initial surface plot
+surf = ax.plot_surface(x, y, z, cmap='turbo')
+fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
+
+# Set up the plot
 ax.set_xlim(0, 1)
 ax.set_ylim(0, 1)
 ax.set_zlim(0, 1)
@@ -41,42 +55,86 @@ ax.set_xlabel('Frequency')
 ax.set_ylabel('Time')
 ax.set_zlabel('Amplitude')
 
-rotation_speed = 1.0  # Initial rotation speed
+# Initialize variables
+rotation_angle = 0
+rotation_speed = 1.0
+last_fft = np.zeros(n_freqs)
 
-# Update function for animation
 def update(frame):
-    global rotation_speed
-    # Read data from microphone
-    data = np.frombuffer(stream.read(CHUNK), dtype=np.float32)
-    # Perform FFT
-    fft_data = np.abs(fft(data))[:CHUNK // 2]
-    freqs = fftfreq(CHUNK, 1 / SAMPLE_RATE)[:CHUNK // 2]
+    global rotation_angle, rotation_speed, surf, last_fft, z
+    
+    try:
+        # Read audio data
+        data = np.frombuffer(stream.read(CHUNK, exception_on_overflow=False), dtype=np.float32)
+        
+        # Compute FFT and apply frequency mask
+        fft_data = np.abs(fft(data))[:CHUNK // 2]
+        fft_data = fft_data[freq_mask]
+        
+        # Apply smoothing
+        smoothing_factor = 0.7
+        fft_data = smoothing_factor * last_fft + (1 - smoothing_factor) * fft_data
+        last_fft = fft_data.copy()
+        
+        # Normalize
+        fft_max = np.max(fft_data)
+        if fft_max > 0:
+            fft_data = fft_data / fft_max
+        
+        # Update z data
+        z = np.roll(z, -1, axis=0)
+        z[-1, :] = fft_data
+        
+        # Update rotation
+        dominant_freq_idx = np.argmax(fft_data)
+        dominant_freq = filtered_freqs[dominant_freq_idx] if fft_max > 0 else 0
+        target_speed = np.clip(dominant_freq / 1000.0, 0.5, 5.0)
+        rotation_speed = 0.95 * rotation_speed + 0.05 * target_speed
+        rotation_angle = (rotation_angle + rotation_speed) % 360
+        
+        # Clear the previous surface
+        ax.clear()
+        
+        # Redraw surface and set view
+        surf = ax.plot_surface(x, y, z, cmap='turbo', antialiased=False)
+        ax.view_init(30, rotation_angle)
+        
+        # Reset the limits and labels
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.set_zlim(0, 1)
+        ax.set_xlabel('Frequency')
+        ax.set_ylabel('Time')
+        ax.set_zlabel('Amplitude')
+        
+    except Exception as e:
+        print(f"Error in update: {e}")
+        return
+    
+    return [surf]
 
-    # Limit frequencies to range of interest
-    mask = (freqs >= FREQ_LIMIT_LOW) & (freqs <= FREQ_LIMIT_HIGH)
-    fft_data = fft_data[mask]
-    freqs = freqs[mask]
+# Create animation with explicit save_count
+anim = FuncAnimation(
+    fig,
+    update,
+    frames=None,
+    interval=50,
+    blit=False,
+    cache_frame_data=False,  # Disable frame caching
+    save_count=SAVE_COUNT    # Explicit save count
+)
 
-    # Update Z data for the surface plot
-    z[:-1, :] = z[1:, :]  # Shift old data
-    z[-1, :len(fft_data)] = fft_data / np.max(fft_data) if np.max(fft_data) > 0 else 0  # Add new data
-    ax.clear()
+# Cleanup function
+def cleanup():
+    stream.stop_stream()
+    stream.close()
+    audio.terminate()
+    plt.close()
 
-    # Redraw surface
-    ax.plot_surface(x, y, z, cmap='turbo')
-
-    # Calculate dominant frequency and update rotation speed
-    dominant_freq = freqs[np.argmax(fft_data)] if len(freqs) > 0 else 0
-    rotation_speed = dominant_freq / 100.0  # Scale rotation speed with dominant frequency
-
-    # Rotate the plot
-    ax.view_init(30, frame * rotation_speed)
-
-# Animate the plot
-ani = FuncAnimation(fig, update, frames=np.linspace(0, 360, 100), interval=50, blit=False)
-plt.show()
-
-# Stop audio stream on exit
-stream.stop_stream()
-stream.close()
-audio.terminate()
+# Keep the animation object in memory and show the plot
+try:
+    plt.show()
+except KeyboardInterrupt:
+    cleanup()
+finally:
+    cleanup()
