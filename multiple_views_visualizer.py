@@ -29,8 +29,11 @@ scalar_map = ScalarMappable(norm=norm, cmap=cmap)
 # Create a fixed-size 2D array to store the intensity values
 intensity_array = np.zeros((time_window, 4096 // 2))
 
+# Variable to keep track of the current azimuthal angle
+azimuthal_angle = 150
+
 # Function to update the waveform in real-time
-def update_waveform(frame, lines, loopback, text, counter):
+def update_waveform(frame, lines, loopback, text, counter, azimuthal_angle, ax_surface):
     audio_data = loopback.record(numframes=4096)  # Match blocksize
     audio_data_mono = audio_data[:, 0] if channels > 1 else audio_data
 
@@ -64,9 +67,11 @@ def update_waveform(frame, lines, loopback, text, counter):
 
     # Update the polar plot with marker sizes based on amplitude
     marker_sizes = positive_fft_data * polar_marker_size_scale  # Scale marker sizes
-    lines[3].set_offsets(np.c_[positive_phases, positive_fft_data * polar_radial_distance_scale])
+    radial_positions = positive_fft_data * polar_radial_distance_scale
+    polar_colors = scalar_map.to_rgba(positive_freqs)  # Map frequency values to colors
+    lines[3].set_offsets(np.c_[positive_phases, radial_positions])
     lines[3].set_sizes(marker_sizes)
-    lines[3].set_color(color)
+    lines[3].set_color(polar_colors)
 
     # Update the intensity array
     intensity_array[:-1] = intensity_array[1:]  # Shift the array up
@@ -76,12 +81,16 @@ def update_waveform(frame, lines, loopback, text, counter):
     lines[4].remove()
     lines[4] = lines[5].plot_surface(*np.meshgrid(positive_freqs, np.arange(time_window)), intensity_array, cmap='turbo')
 
-    # Update the text element every 3 seconds
-    if counter[0] % 150 == 0:  # 150 frames * 20ms interval = 3 seconds
+    # Increment the azimuthal angle for continuous rotation
+    azimuthal_angle += 1
+    ax_surface.view_init(elev=30, azim=azimuthal_angle)
+
+    # Update the text element every 1 second
+    if counter[0] % 50 == 0:  # 50 frames * 20ms interval = 1 second
         text.set_text(f'Dominant Frequency: {dominant_freq:.2f} Hz')
 
     counter[0] += 1
-    return lines + [text]
+    return lines + [text], azimuthal_angle
 
 # Start recording and display real-time waveform
 print("Press 'q' to quit.")
@@ -114,11 +123,16 @@ with loopback:
     ax_polar = fig.add_subplot(gs[0, 1], projection='polar')
     polar_plot = ax_polar.scatter(np.angle(bar_freqs), bar_heights)
     ax_polar.set_ylim(0, max(bar_heights))
+    ax_polar.axis('off')
 
     # Surface plot
     ax_surface = fig.add_subplot(gs[1:, 1], projection='3d')
     X, Y = np.meshgrid(bar_freqs, np.arange(time_window))
     surface_plot = ax_surface.plot_surface(X, Y, intensity_array, cmap='turbo')
+    ax_surface.axis('off')
+    ax_surface.set_xticks([])
+    ax_surface.set_yticks([])
+    ax_surface.set_zticks([])
 
     # Adjust subplot parameters to remove margins
     fig.subplots_adjust(left=0, right=1, top=1, bottom=0, hspace=0.1, wspace=0.1)
@@ -135,13 +149,12 @@ with loopback:
     # Counter to control the update interval for the text
     counter = [0]
 
-    ani = animation.FuncAnimation(fig, update_waveform, fargs=([line_waveform, bar_plot.patches, scatter_plot, polar_plot, surface_plot, ax_surface], loopback, text, counter), interval=20, cache_frame_data=False)
+    ani = animation.FuncAnimation(fig, update_waveform, fargs=([line_waveform, bar_plot.patches, scatter_plot, polar_plot, surface_plot, ax_surface], loopback, text, counter, azimuthal_angle, ax_surface), interval=20, cache_frame_data=False)
 
     plt.show()
 
     while True:
         if keyboard.is_pressed('q'):
-            print("Quitting...")
             break
 
 print("Done.")
