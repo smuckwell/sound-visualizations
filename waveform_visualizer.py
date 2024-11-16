@@ -16,6 +16,20 @@ channels = 2
 def update_waveform(frame, line, loopback):
     audio_data = loopback.record(numframes=4096)  # Match blocksize
     audio_data_mono = audio_data[:, 0] if channels > 1 else audio_data
+
+    # Calculate the FFT to find the dominant frequency
+    fft_data = np.fft.fft(audio_data_mono)
+    freqs = np.fft.fftfreq(len(fft_data), 1/sample_rate)
+    positive_freqs = freqs[:len(freqs)//2]
+    positive_fft_data = np.abs(fft_data[:len(fft_data)//2])
+    dominant_freq = positive_freqs[np.argmax(positive_fft_data)]
+
+    # Change the color of the waveform based on the dominant frequency
+    if dominant_freq < 1000:
+        line.set_color('red')
+    else:
+        line.set_color('blue')
+
     line.set_ydata(audio_data_mono)
     return line,
 
@@ -34,8 +48,8 @@ with loopback:
     tick_positions = np.linspace(0, 4096 // 2, num_ticks, endpoint=False, dtype=int)
     tick_labels = [f'{int(freq)} Hz' for freq in positive_freq_bins[tick_positions]]
 
-    #ax.set_xticks(tick_positions)
-    #ax.set_xticklabels(tick_labels)
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels)
 
     ani = animation.FuncAnimation(fig, update_waveform, fargs=(line, loopback), interval=20, cache_frame_data=False)
 
