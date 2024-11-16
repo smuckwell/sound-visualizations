@@ -17,6 +17,8 @@ channels = 2
 min_freq = 20  # Minimum audible frequency in Hz
 max_freq = 400  # Maximum audible frequency in Hz is 20,000 Hz. Narrow the range for better visualization.
 
+height_scale = 4  # Scale the height of the bars by a factor of 2
+
 visualization_title = 'Apres Ski Waveform Sampler Platter'
 
 # Create a colormap that spans from violet to red
@@ -33,7 +35,7 @@ def update_waveform(frame, lines, loopback, text, counter):
     fft_data = np.fft.fft(audio_data_mono)
     freqs = np.fft.fftfreq(len(fft_data), 1/sample_rate)
     positive_freqs = freqs[:len(freqs)//2]
-    positive_fft_data = np.abs(fft_data[:len(fft_data)//2])
+    positive_fft_data = np.abs(fft_data[:len(fft_data)//2]) * height_scale
     positive_phases = np.angle(fft_data[:len(fft_data)//2])
 
     dominant_freq = positive_freqs[np.argmax(positive_fft_data)]
@@ -81,21 +83,23 @@ with loopback:
     # Bar plot
     ax_bar = fig.add_subplot(gs[0, 1])
     bar_freqs = np.fft.fftfreq(4096, 1/sample_rate)[:4096 // 2]
-    bar_heights = np.abs(np.fft.fft(np.random.rand(4096))[:4096 // 2])
+    bar_heights = np.abs(np.fft.fft(np.random.rand(4096))[:4096 // 2]) * height_scale
     bar_plot = ax_bar.bar(bar_freqs, bar_heights, width=10)
     ax_bar.set_xlim(min_freq, max_freq)
+    ax_bar.set_ylim(0, max(bar_heights)/height_scale)
     ax_bar.axis('off')
 
     # Scatter plot
     ax_scatter = fig.add_subplot(gs[1, 0])
     scatter_plot = ax_scatter.scatter(bar_freqs, bar_heights)
     ax_scatter.set_xlim(min_freq, max_freq)
+    ax_scatter.set_ylim(0, max(bar_heights)/height_scale)
     ax_scatter.axis('off')
 
     # Polar plot
     ax_polar = fig.add_subplot(gs[1, 1], projection='polar')
     polar_plot = ax_polar.scatter(np.angle(bar_freqs), bar_heights)
-    ax_polar.set_ylim(0, max(bar_heights))
+    ax_polar.set_ylim(0, max(bar_heights)/height_scale)
 
     # Adjust subplot parameters to remove margins
     fig.subplots_adjust(left=0, right=1, top=1, bottom=0, hspace=0.1, wspace=0.1)
