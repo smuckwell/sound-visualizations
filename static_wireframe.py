@@ -16,6 +16,8 @@ SAVE_COUNT = 100  # Number of frames to keep in memory
 
 z_axis_scaling = 0.5
 
+z_axis_view_angle_rotation = 15
+
 # PyAudio initialization
 audio = pyaudio.PyAudio()
 stream = audio.open(
@@ -41,13 +43,18 @@ x, y = np.meshgrid(x, y)
 # Initialize the plot in fullscreen
 plt.rcParams['figure.figsize'] = [plt.get_current_fig_manager().window.winfo_screenwidth()/100, 
                                  plt.get_current_fig_manager().window.winfo_screenheight()/100]
-fig = plt.figure(figsize=(20, 16))
+fig = plt.figure()
 fig.canvas.manager.window.attributes('-fullscreen', True)
 
-# Create 3D axes with a specific position to center it
+# Create 3D axes with a specific position for top left
 ax = fig.add_subplot(111, projection='3d')
-margin = 0.02  # Adjust this value to control the margin around the plot
-ax.set_position([margin, margin, 1 - 2*margin, 1 - 2*margin])
+
+# Adjust these margins to move the plot to top left
+left_margin = -0.4   # Reduce left margin to move left
+top_margin = -0.4    # Reduce top margin to move up
+width = 1.3         # Adjust width of plot
+height = 1.2        # Adjust height of plot
+ax.set_position([left_margin, 1-height-top_margin, width, height])
 
 # Set the background color to black
 fig.patch.set_facecolor('black')
@@ -65,8 +72,9 @@ ax.set_ylim(0, 1)
 ax.set_zlim(0, 1)
 ax.axis('off')  # Remove axis markers, labels, and ticks
 
-# Set static view angle
-ax.view_init(30, 45)  # 30 degrees elevation, 45 degrees azimuth
+# Set static view angle for top-left orientation
+# ax.view_init(20, 240)  # Modified view angle
+ax.view_init(20, z_axis_view_angle_rotation)  # 
 
 # Initialize variables
 last_fft = np.zeros(n_freqs)
@@ -124,15 +132,17 @@ def update(frame):
         # Redraw wireframe with colors
         wire = ax.plot_wireframe(x, y, z, rcount=HISTORY_SIZE, ccount=n_freqs,
                                linewidth=0.5, colors=segment_colors)
-        ax.view_init(30, 45)
+        
+        # Maintain view angle
+        ax.view_init(20, z_axis_view_angle_rotation)
         
         # Reset the limits and labels
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
         ax.set_zlim(0, np.max(z))
         
-        # Ensure plot position remains centered
-        ax.set_position([margin, margin, 1 - 2*margin, 1 - 2*margin])
+        # Maintain the top-left position
+        ax.set_position([left_margin, 1-height-top_margin, width, height])
         
     except Exception as e:
         print(f"Error in update: {e}")
