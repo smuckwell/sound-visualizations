@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from scipy.fft import fft, fftfreq
 from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.colors as colors
 
 # Audio configuration
 SAMPLE_RATE = 44100
@@ -40,9 +41,13 @@ x, y = np.meshgrid(x, y)
 # Initialize the plot in fullscreen
 plt.rcParams['figure.figsize'] = [plt.get_current_fig_manager().window.winfo_screenwidth()/100, 
                                  plt.get_current_fig_manager().window.winfo_screenheight()/100]
-fig = plt.figure()
+fig = plt.figure(figsize=(20, 16))
 fig.canvas.manager.window.attributes('-fullscreen', True)
+
+# Create 3D axes with a specific position to center it
 ax = fig.add_subplot(111, projection='3d')
+margin = 0.02  # Adjust this value to control the margin around the plot
+ax.set_position([margin, margin, 1 - 2*margin, 1 - 2*margin])
 
 # Set the background color to black
 fig.patch.set_facecolor('black')
@@ -52,7 +57,7 @@ ax.set_facecolor('black')
 z = np.zeros((HISTORY_SIZE, n_freqs))
 
 # Create initial wireframe plot
-wire = ax.plot_wireframe(x, y, z, cmap='turbo', rcount=HISTORY_SIZE, ccount=n_freqs)
+wire = None
 
 # Set up the plot
 ax.set_xlim(0, 1)
@@ -65,6 +70,21 @@ ax.view_init(30, 45)  # 30 degrees elevation, 45 degrees azimuth
 
 # Initialize variables
 last_fft = np.zeros(n_freqs)
+
+def get_color_array(z_values):
+    # Normalize z values to 0-1 range
+    z_min, z_max = np.min(z_values), np.max(z_values)
+    if z_min == z_max:
+        normalized = np.zeros_like(z_values)
+    else:
+        normalized = (z_values - z_min) / (z_max - z_min)
+    
+    # Get colors from turbo colormap
+    colors = plt.cm.turbo(normalized)
+    
+    # Convert to the format expected by plot_wireframe
+    colors_reshaped = colors.reshape(-1, 4)  # Reshape to (N, 4) array
+    return colors_reshaped
 
 def update(frame):
     global wire, last_fft, z
@@ -96,16 +116,23 @@ def update(frame):
         
         # Clear the previous wireframe
         ax.clear()
+        ax.axis('off')
         
-        # Redraw wireframe with fixed view
-        wire = ax.plot_wireframe(x, y, z, color='cyan', linewidth=0.5)
+        # Get colors for the wireframe
+        segment_colors = get_color_array(z)
+        
+        # Redraw wireframe with colors
+        wire = ax.plot_wireframe(x, y, z, rcount=HISTORY_SIZE, ccount=n_freqs,
+                               linewidth=0.5, colors=segment_colors)
         ax.view_init(30, 45)
         
         # Reset the limits and labels
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
         ax.set_zlim(0, np.max(z))
-        ax.axis('off')
+        
+        # Ensure plot position remains centered
+        ax.set_position([margin, margin, 1 - 2*margin, 1 - 2*margin])
         
     except Exception as e:
         print(f"Error in update: {e}")
