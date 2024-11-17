@@ -9,10 +9,13 @@ from mpl_toolkits.mplot3d import Axes3D
 # Audio configuration
 SAMPLE_RATE = 44100
 CHUNK = 1024
-FREQ_LIMIT_LOW = 20
+FREQ_LIMIT_LOW = 1
 FREQ_LIMIT_HIGH = 5000
 HISTORY_SIZE = 100
 SAVE_COUNT = 100  # Number of frames to keep in memory
+
+z_axis_scaling = 0.5
+z_axis_rotation_speed = 3.0
 
 # PyAudio initialization
 audio = pyaudio.PyAudio()
@@ -40,24 +43,25 @@ x, y = np.meshgrid(x, y)
 fig = plt.figure(figsize=(10, 8))
 ax = fig.add_subplot(111, projection='3d')
 
+# Set the background color to black
+fig.patch.set_facecolor('black')
+ax.set_facecolor('black')
+
 # Initialize the z data
 z = np.zeros((HISTORY_SIZE, n_freqs))
 
 # Create initial surface plot
 surf = ax.plot_surface(x, y, z, cmap='turbo')
-fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
 
 # Set up the plot
 ax.set_xlim(0, 1)
 ax.set_ylim(0, 1)
 ax.set_zlim(0, 1)
-ax.set_xlabel('Frequency')
-ax.set_ylabel('Time')
-ax.set_zlabel('Amplitude')
+ax.axis('off')  # Remove axis markers, labels, and ticks
 
 # Initialize variables
 rotation_angle = 0
-rotation_speed = 1.0
+rotation_speed = z_axis_rotation_speed
 last_fft = np.zeros(n_freqs)
 
 def update(frame):
@@ -81,6 +85,9 @@ def update(frame):
         if fft_max > 0:
             fft_data = fft_data / fft_max
         
+        # Apply logarithmic transformation
+        fft_data = np.log1p(fft_data) * z_axis_scaling  # log1p is used to avoid log(0)
+        
         # Update z data
         z = np.roll(z, -1, axis=0)
         z[-1, :] = fft_data
@@ -102,10 +109,8 @@ def update(frame):
         # Reset the limits and labels
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
-        ax.set_zlim(0, 1)
-        ax.set_xlabel('Frequency')
-        ax.set_ylabel('Time')
-        ax.set_zlabel('Amplitude')
+        ax.set_zlim(0, np.max(z))
+        ax.axis('off')  # Remove axis markers, labels, and ticks
         
     except Exception as e:
         print(f"Error in update: {e}")
