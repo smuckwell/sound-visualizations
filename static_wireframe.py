@@ -43,11 +43,14 @@ x, y = np.meshgrid(x, y)
 # Initialize the plot in fullscreen
 plt.rcParams['figure.figsize'] = [plt.get_current_fig_manager().window.winfo_screenwidth()/100, 
                                  plt.get_current_fig_manager().window.winfo_screenheight()/100]
-fig = plt.figure()
-fig.canvas.manager.window.attributes('-fullscreen', True)
+fig = plt.figure(figsize=(10, 8))
+fig.canvas.manager.window.attributes('-fullscreen', False)
 
 # Create 3D axes with a specific position for top left
 ax = fig.add_subplot(111, projection='3d')
+
+# Center the plot within the screen
+fig.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
 
 # Adjust these margins to move the plot to top left
 left_margin = -0.4   # Reduce left margin to move left
@@ -56,9 +59,9 @@ width = 1.3         # Adjust width of plot
 height = 1.2        # Adjust height of plot
 ax.set_position([left_margin, 1-height-top_margin, width, height])
 
-# Set the background color to black
-fig.patch.set_facecolor('black')
-ax.set_facecolor('black')
+# Set the background color to white
+fig.patch.set_facecolor('white')
+ax.set_facecolor('white')
 
 # Initialize the z data
 z = np.zeros((HISTORY_SIZE, n_freqs))
