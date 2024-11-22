@@ -166,7 +166,7 @@ anim = FuncAnimation(
     fig,
     update,
     frames=None,
-    interval=50,
+    interval=0.001,  # Reduced interval for higher refresh rate
     blit=False,
     cache_frame_data=False,
     save_count=SAVE_COUNT
