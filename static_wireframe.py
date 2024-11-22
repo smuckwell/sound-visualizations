@@ -5,18 +5,18 @@ from matplotlib.animation import FuncAnimation
 from scipy.fft import fft, fftfreq
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.colors as colors
+import tkinter as tk
 
-# Audio configuration
+# Audio configuration remains the same
 SAMPLE_RATE = 44100
 CHUNK = 1024
 FREQ_LIMIT_LOW = 1
 FREQ_LIMIT_HIGH = 5000
 HISTORY_SIZE = 100
-SAVE_COUNT = 100  # Number of frames to keep in memory
+SAVE_COUNT = 100
 
 z_axis_scaling = 0.5
-
-z_axis_view_angle_rotation = 15
+z_axis_view_angle_rotation = 45
 
 # PyAudio initialization
 audio = pyaudio.PyAudio()
@@ -35,66 +35,73 @@ freq_mask = (freqs >= FREQ_LIMIT_LOW) & (freqs <= FREQ_LIMIT_HIGH)
 filtered_freqs = freqs[freq_mask]
 n_freqs = len(filtered_freqs)
 
-# Pre-calculate the meshgrid
-x = np.linspace(0, 1, n_freqs)
-y = np.linspace(0, 1, HISTORY_SIZE)
+# Pre-calculate the meshgrid with extended range
+x = np.linspace(-1, 2, n_freqs)  # Extended range
+y = np.linspace(-1, 2, HISTORY_SIZE)  # Extended range
 x, y = np.meshgrid(x, y)
 
-# Initialize the plot in fullscreen
-plt.rcParams['figure.figsize'] = [plt.get_current_fig_manager().window.winfo_screenwidth()/100, 
-                                 plt.get_current_fig_manager().window.winfo_screenheight()/100]
-fig = plt.figure(figsize=(10, 8))
-fig.canvas.manager.window.attributes('-fullscreen', False)
+# Get the screen dimensions using tkinter
+root = tk.Tk()
+screen_width = root.winfo_screenwidth()
+screen_height = root.winfo_screenheight()
+root.destroy()
 
-# Create 3D axes with a specific position for top left
-ax = fig.add_subplot(111, projection='3d')
+# Calculate oversized figure dimensions
+scale_factor = 2.0  # Make figure twice the screen size
+target_dpi = 100
+figure_width = (screen_width * scale_factor) / target_dpi
+figure_height = (screen_height * scale_factor) / target_dpi
 
-# Center the plot within the screen
-fig.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+# Set the figure size and DPI explicitly
+plt.rcParams['figure.dpi'] = target_dpi
+plt.rcParams['figure.figsize'] = [figure_width, figure_height]
 
-# Adjust these margins to move the plot to top left
-left_margin = -0.4   # Reduce left margin to move left
-top_margin = -0.4    # Reduce top margin to move up
-width = 1.3         # Adjust width of plot
-height = 1.2        # Adjust height of plot
-ax.set_position([left_margin, 1-height-top_margin, width, height])
+# Create the oversized figure
+fig = plt.figure(
+    figsize=(figure_width, figure_height),
+    dpi=target_dpi,
+    facecolor='white'
+)
 
-# Set the background color to white
+# Make figure fullscreen
+mng = plt.get_current_fig_manager()
+mng.window.state('zoomed')  # For Windows
+# mng.full_screen_toggle()  # For Linux
+
+# Create 3D axes with extended position
+ax = fig.add_subplot(111, projection='3d', computed_zorder=False)
+
+# Set axes to extend beyond figure boundaries
+ax.set_position([-0.5, -0.5, 2.0, 2.0])  # Values outside 0-1 range
+
+# Set the background colors
 fig.patch.set_facecolor('white')
 ax.set_facecolor('white')
 
 # Initialize the z data
 z = np.zeros((HISTORY_SIZE, n_freqs))
-
-# Create initial wireframe plot
 wire = None
 
-# Set up the plot
-ax.set_xlim(0, 1)
-ax.set_ylim(0, 1)
-ax.set_zlim(0, 1)
-ax.axis('off')  # Remove axis markers, labels, and ticks
+# Set up the plot with extended limits
+ax.set_xlim(-1, 2)  # Extended limits
+ax.set_ylim(-1, 2)  # Extended limits
+ax.set_zlim(0, 2)   # Extended limits
+ax.axis('off')
 
-# Set static view angle for top-left orientation
-# ax.view_init(20, 240)  # Modified view angle
-ax.view_init(20, z_axis_view_angle_rotation)  # 
+# Set view angle
+ax.view_init(30, z_axis_view_angle_rotation)
 
 # Initialize variables
 last_fft = np.zeros(n_freqs)
 
 def get_color_array(z_values):
-    # Normalize z values to 0-1 range
     z_min, z_max = np.min(z_values), np.max(z_values)
     if z_min == z_max:
         normalized = np.zeros_like(z_values)
     else:
         normalized = (z_values - z_min) / (z_max - z_min)
-    
-    # Get colors from turbo colormap
     colors = plt.cm.turbo(normalized)
-    
-    # Convert to the format expected by plot_wireframe
-    colors_reshaped = colors.reshape(-1, 4)  # Reshape to (N, 4) array
+    colors_reshaped = colors.reshape(-1, 4)
     return colors_reshaped
 
 def update(frame):
@@ -118,8 +125,8 @@ def update(frame):
         if fft_max > 0:
             fft_data = fft_data / fft_max
         
-        # Apply logarithmic transformation
-        fft_data = np.log1p(fft_data) * z_axis_scaling
+        # Apply logarithmic transformation with increased scaling
+        fft_data = np.log1p(fft_data) * z_axis_scaling * 2  # Increased scaling
         
         # Update z data
         z = np.roll(z, -1, axis=0)
@@ -132,20 +139,20 @@ def update(frame):
         # Get colors for the wireframe
         segment_colors = get_color_array(z)
         
-        # Redraw wireframe with colors
+        # Redraw wireframe with colors and thicker lines
         wire = ax.plot_wireframe(x, y, z, rcount=HISTORY_SIZE, ccount=n_freqs,
-                               linewidth=0.5, colors=segment_colors)
+                               linewidth=1.5, colors=segment_colors)
         
         # Maintain view angle
-        ax.view_init(20, z_axis_view_angle_rotation)
+        ax.view_init(30, z_axis_view_angle_rotation)
         
-        # Reset the limits and labels
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.set_zlim(0, np.max(z))
+        # Reset the extended limits
+        ax.set_xlim(-1, 2)
+        ax.set_ylim(-1, 2)
+        ax.set_zlim(0, np.max(z) * 2)  # Extended Z limit
         
-        # Maintain the top-left position
-        ax.set_position([left_margin, 1-height-top_margin, width, height])
+        # Maintain extended position
+        ax.set_position([-0.5, -0.5, 2.0, 2.0])
         
     except Exception as e:
         print(f"Error in update: {e}")
