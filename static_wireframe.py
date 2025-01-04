@@ -240,7 +240,7 @@ anim = FuncAnimation(
     fig,
     update,
     frames=None,
-    interval=50,
+    interval=10,
     blit=False,
     cache_frame_data=False,
     save_count=SAVE_COUNT
