@@ -42,9 +42,9 @@ x, y = np.meshgrid(x, y)
 
 # Get the screen dimensions using tkinter
 root = tk.Tk()
+root.withdraw()  # Hide the root window
 screen_width = root.winfo_screenwidth()
 screen_height = root.winfo_screenheight()
-root.destroy()
 
 # Calculate oversized figure dimensions
 scale_factor = 4.0
@@ -54,46 +54,38 @@ figure_height = (screen_height * scale_factor) / target_dpi
 
 # Set the figure size and DPI explicitly
 plt.rcParams['figure.dpi'] = target_dpi
-plt.rcParams['figure.figsize'] = [figure_width, figure_height]
 
-# Create the oversized figure
-fig = plt.figure(
-    figsize=(figure_width, figure_height),
-    dpi=target_dpi,
-    facecolor='white'
-)
+# Initialize the plot
+fig = plt.figure(figsize=(figure_width, figure_height))
+ax = fig.add_subplot(111, projection='3d')
 
-# Make figure fullscreen
-mng = plt.get_current_fig_manager()
-mng.window.state('zoomed')  # For Windows
-# mng.full_screen_toggle()  # For Linux
+# Maximize the figure window
+plt.get_current_fig_manager().window.state('zoomed')
 
-# Create 3D axes with extended position
-ax = fig.add_subplot(111, projection='3d', computed_zorder=False)
-
-# Set axes to extend beyond figure boundaries with adjusted centering
-# Format: [left, bottom, width, height]
-ax.set_position([-10.0, -1.0, 10.0, 4.0]) # Adjusted left position for centering
-
-# Set the background colors
+# Set the background color to white
 fig.patch.set_facecolor('white')
 ax.set_facecolor('white')
 
-# Initialize the z data
-z = np.zeros((HISTORY_SIZE, n_freqs))
-wire = None
-
-# Set up the plot with centered limits
-ax.set_xlim(-3, 3)  # Centered limits
-ax.set_ylim(-3, 3)  # Centered limits
-ax.set_zlim(0, 4)   
+# Remove axis markers, labels, and ticks
 ax.axis('off')
-
-# Set view angle
-ax.view_init(30, z_axis_view_angle_rotation)
 
 # Initialize variables
 last_fft = np.zeros(n_freqs)
+z = np.zeros((HISTORY_SIZE, n_freqs))
+
+# Persistent settings for user interactions
+persistent_settings = {
+    'view_init': (30, z_axis_view_angle_rotation),
+    'position': [0, 0, 1, 1],  # Fill the entire figure
+    'xlim': (-3, 3),
+    'ylim': (-3, 3),
+    'zlim': (0, 1),
+    'figsize': (figure_width, figure_height),
+    'hspace': 0.0,
+    'wspace': 0.0,
+    'scale': 1.0,
+    'aspect': 'auto'
+}
 
 def get_color_array(z_values):
     z_min, z_max = np.min(z_values), np.max(z_values)
@@ -145,15 +137,25 @@ def update(frame):
                                linewidth=2.0, colors=segment_colors)
         
         # Maintain view angle
-        ax.view_init(30, z_axis_view_angle_rotation)
+        ax.view_init(*persistent_settings['view_init'])
         
         # Reset the extended limits
-        ax.set_xlim(-3, 3)
-        ax.set_ylim(-3, 3)
-        ax.set_zlim(0, np.max(z) * 2)
+        ax.set_xlim(*persistent_settings['xlim'])
+        ax.set_ylim(*persistent_settings['ylim'])
+        ax.set_zlim(*persistent_settings['zlim'])
         
         # Maintain extended position
-        ax.set_position([-2.0, -1.0, 6.0, 4.0])
+        ax.set_position(persistent_settings['position'])
+        
+        # Update figure size
+        fig.set_size_inches(*persistent_settings['figsize'])
+        
+        # Update subplot spacing
+        fig.subplots_adjust(hspace=persistent_settings['hspace'], wspace=persistent_settings['wspace'])
+        
+        # Update scale and aspect ratio
+        ax.set_box_aspect([1, 1, persistent_settings['scale']])
+        ax.set_aspect(persistent_settings['aspect'])
         
     except Exception as e:
         print(f"Error in update: {e}")
@@ -161,23 +163,66 @@ def update(frame):
     
     return [wire]
 
+# Function to capture user interactions
+def on_resize(event):
+    persistent_settings['position'] = ax.get_position().bounds
+    persistent_settings['figsize'] = fig.get_size_inches()
+    persistent_settings['hspace'] = fig.subplotpars.hspace
+    persistent_settings['wspace'] = fig.subplotpars.wspace
+    print_settings()
+
+def on_rotate(event):
+    persistent_settings['view_init'] = ax.elev, ax.azim
+    print_settings()
+
+def on_xlim_changed(event):
+    persistent_settings['xlim'] = ax.get_xlim()
+    print_settings()
+
+def on_ylim_changed(event):
+    persistent_settings['ylim'] = ax.get_ylim()
+    print_settings()
+
+def on_zlim_changed(event):
+    persistent_settings['zlim'] = ax.get_zlim()
+    print_settings()
+
+def on_draw(event):
+    persistent_settings['scale'] = ax.get_box_aspect()[2]
+    persistent_settings['aspect'] = ax.get_aspect()
+    #print_settings()
+
+def print_settings():
+    print("Current settings:")
+    print(f"View Init: {persistent_settings['view_init']}")
+    print(f"Position: {persistent_settings['position']}")
+    print(f"X Lim: {persistent_settings['xlim']}")
+    print(f"Y Lim: {persistent_settings['ylim']}")
+    print(f"Z Lim: {persistent_settings['zlim']}")
+    print(f"Figure Size: {persistent_settings['figsize']}")
+    print(f"H Space: {persistent_settings['hspace']}")
+    print(f"W Space: {persistent_settings['wspace']}")
+    print(f"Scale: {persistent_settings['scale']}")
+    print(f"Aspect: {persistent_settings['aspect']}")
+
+# Connect event handlers
+fig.canvas.mpl_connect('resize_event', on_resize)
+fig.canvas.mpl_connect('motion_notify_event', on_rotate)
+fig.canvas.mpl_connect('draw_event', on_draw)
+ax.callbacks.connect('xlim_changed', on_xlim_changed)
+ax.callbacks.connect('ylim_changed', on_ylim_changed)
+ax.callbacks.connect('zlim_changed', on_zlim_changed)
+
 # Create animation
 anim = FuncAnimation(
     fig,
     update,
     frames=None,
-    interval=0.001,  # Reduced interval for higher refresh rate
+    interval=50,
     blit=False,
     cache_frame_data=False,
     save_count=SAVE_COUNT
 )
-
-# Cleanup function
-def cleanup():
-    stream.stop_stream()
-    stream.close()
-    audio.terminate()
-    plt.close()
 
 # Add keyboard event to exit fullscreen with 'q' or 'Esc'
 def on_key(event):
@@ -186,6 +231,13 @@ def on_key(event):
         plt.close('all')
 
 fig.canvas.mpl_connect('key_press_event', on_key)
+
+# Cleanup function
+def cleanup():
+    stream.stop_stream()
+    stream.close()
+    audio.terminate()
+    plt.close()
 
 # Keep the animation object in memory and show the plot
 try:
