@@ -7,20 +7,19 @@ from typing import Optional, Tuple, Set
 import pyaudio
 from scipy.fft import fft, fftfreq
 
+
 class PersistentSettings:
     """Manages persistent view and interaction settings"""
     def __init__(self):
-        self.view_init = (30, -30)  # elevation, azimuth
-        self.position = [0, 0, 1, 1]
+        self.view_init = (30, -30)  # elevation, azimuth for 3D plots
         self.xlim = (-2, 2)
         self.ylim = (-2, 2)
         self.zlim = (0, 1)
         self.scale = 1.0
         self.aspect = 'auto'
-        self.offset = [0, 0, 0]  # x, y, z offsets for panning
         self.mouse_init = None
-        self.offset_init = None
         self.button_pressed = None
+
 
 class AudioManager:
     """Handles audio input and processing"""
@@ -55,6 +54,7 @@ class AudioManager:
         if self.audio is not None:
             self.audio.terminate()
 
+
 class Animation(ABC):
     """Abstract base class for animations"""
     def __init__(self, ax):
@@ -75,11 +75,11 @@ class Animation(ABC):
         if event.inaxes == self.ax:
             self.settings.button_pressed = event.button
             self.settings.mouse_init = (event.xdata, event.ydata)
-            self.settings.offset_init = self.settings.offset.copy()
-
+    
     def _on_mouse_release(self, event):
         self.settings.button_pressed = None
-
+        self.settings.mouse_init = None
+    
     def _on_mouse_motion(self, event):
         if event.inaxes == self.ax and self.settings.button_pressed is not None:
             if hasattr(self.ax, 'view_init'):  # 3D axes
@@ -89,16 +89,21 @@ class Animation(ABC):
                 if self.settings.mouse_init is not None and event.xdata is not None and event.ydata is not None:
                     dx = event.xdata - self.settings.mouse_init[0]
                     dy = event.ydata - self.settings.mouse_init[1]
-                    self.settings.offset[0] = self.settings.offset_init[0] + dx
-                    self.settings.offset[1] = self.settings.offset_init[1] + dy
-
+                    
+                    # Update axis limits directly
+                    new_xlim = (self.settings.xlim[0] - dx, self.settings.xlim[1] - dx)
+                    new_ylim = (self.settings.ylim[0] - dy, self.settings.ylim[1] - dy)
+                    
+                    self.settings.xlim = new_xlim
+                    self.settings.ylim = new_ylim
+    
     def _on_scroll(self, event):
         if event.inaxes == self.ax:
             scale_factor = 1.1 if event.button == 'up' else 0.9
             self.settings.scale *= scale_factor
             # Update limits proportionally
             self._update_limits(scale_factor)
-
+    
     def _update_limits(self, scale_factor):
         """Update axis limits based on scale factor"""
         for lim_name in ['xlim', 'ylim', 'zlim']:
@@ -106,25 +111,22 @@ class Animation(ABC):
                 current_lim = getattr(self.settings, lim_name)
                 center = sum(current_lim) / 2
                 range_val = current_lim[1] - current_lim[0]
-                new_lim = (center - range_val/2 * scale_factor,
-                          center + range_val/2 * scale_factor)
+                new_lim = (center - range_val / 2 * scale_factor,
+                          center + range_val / 2 * scale_factor)
                 setattr(self.settings, lim_name, new_lim)
-
+    
     def _apply_persistent_settings(self):
         """Apply persistent settings to the current axes"""
         if hasattr(self.ax, 'view_init'):  # 3D axes
             self.ax.view_init(*self.settings.view_init)
         
-        # Apply limits with offsets
-        self.ax.set_xlim(self.settings.xlim[0] + self.settings.offset[0],
-                        self.settings.xlim[1] + self.settings.offset[0])
-        self.ax.set_ylim(self.settings.ylim[0] + self.settings.offset[1],
-                        self.settings.ylim[1] + self.settings.offset[1])
+        # Apply limits directly
+        self.ax.set_xlim(self.settings.xlim)
+        self.ax.set_ylim(self.settings.ylim)
         
         if hasattr(self.ax, 'set_zlim'):
-            self.ax.set_zlim(self.settings.zlim[0] + self.settings.offset[2],
-                            self.settings.zlim[1] + self.settings.offset[2])
-
+            self.ax.set_zlim(self.settings.zlim)
+    
     @abstractmethod
     def animate(self, frame: int) -> None:
         """Update the animation for the given frame"""
@@ -141,6 +143,7 @@ class Animation(ABC):
             self.ax.clear()
         self.artists.clear()
 
+
 class SineWaveAnimation(Animation):
     """Animated sine wave with moving phase"""
     def __init__(self, ax):
@@ -149,13 +152,9 @@ class SineWaveAnimation(Animation):
         
     def animate(self, frame: int) -> None:
         self.ax.clear()
-        y = np.sin(self.x + frame/10)
+        y = np.sin(self.x + frame / 10)
         
-        # Apply offsets to data
-        x_offset = self.x + self.settings.offset[0]
-        y_offset = y + self.settings.offset[1]
-        
-        line = self._plot_wave(x_offset, y_offset)
+        line = self._plot_wave(self.x, y)
         self.artists = [line]
         self._set_plot_properties()
         self._apply_persistent_settings()
@@ -174,6 +173,7 @@ class SineWaveAnimation(Animation):
     def get_title(self) -> str:
         return 'Animation 1: Moving Sine Wave'
 
+
 class ScatterAnimation(Animation):
     """Animated scatter plot with dynamic points"""
     def __init__(self, ax, n_points: int = 50):
@@ -184,19 +184,15 @@ class ScatterAnimation(Animation):
         self.ax.clear()
         x, y = self._calculate_positions(frame)
         
-        # Apply offsets to data
-        x_offset = x + self.settings.offset[0]
-        y_offset = y + self.settings.offset[1]
-        
         colors = np.random.rand(self.n_points)
-        scatter = self._plot_scatter(x_offset, y_offset, colors)
+        scatter = self._plot_scatter(x, y, colors)
         self.artists = [scatter]
         self._set_plot_properties()
         self._apply_persistent_settings()
         
     def _calculate_positions(self, frame: int) -> Tuple[np.ndarray, np.ndarray]:
-        x = np.sin(frame/10) * np.random.rand(self.n_points) + np.cos(frame/20) * np.random.rand(self.n_points)
-        y = np.cos(frame/10) * np.random.rand(self.n_points) + np.sin(frame/20) * np.random.rand(self.n_points)
+        x = np.sin(frame / 10) * np.random.rand(self.n_points) + np.cos(frame / 20) * np.random.rand(self.n_points)
+        y = np.cos(frame / 10) * np.random.rand(self.n_points) + np.sin(frame / 20) * np.random.rand(self.n_points)
         return x, y
         
     def _plot_scatter(self, x: np.ndarray, y: np.ndarray, colors: np.ndarray):
@@ -210,6 +206,7 @@ class ScatterAnimation(Animation):
         
     def get_title(self) -> str:
         return 'Animation 2: Dancing Scatter Plot'
+
 
 class AudioHexbinAnimation(Animation):
     """Animated hexbin plot of audio frequency data"""
@@ -244,11 +241,11 @@ class AudioHexbinAnimation(Animation):
             if fft_max > 0:
                 fft_data = fft_data / fft_max
             
-            # Store data points with offsets
-            freqs_offset = self.audio_manager.filtered_freqs + self.settings.offset[0]
-            for freq, amp in zip(freqs_offset, fft_data):
-                self.frequency_history.append(freq)
-                self.amplitude_history.append(amp + self.settings.offset[1])
+            # Store data points without offsets
+            freqs = self.audio_manager.filtered_freqs
+            amplitudes = fft_data
+            self.frequency_history.extend(freqs)
+            self.amplitude_history.extend(amplitudes)
             
             # Keep only recent history
             max_points = self.HISTORY_SIZE * self.audio_manager.n_freqs
@@ -312,6 +309,7 @@ class AudioHexbinAnimation(Animation):
     def get_title(self) -> str:
         return 'Animation 3: Audio Frequency Visualization'
 
+
 class AnimationManager:
     """Manages the creation and switching of animations"""
     def __init__(self):
@@ -367,8 +365,10 @@ class AnimationManager:
             cache_frame_data=False
         )
         
-    def switch_visualization(self, key) -> None:
-        self.start_animation(key.name)
+    def switch_visualization(self, event) -> None:
+        if hasattr(event, 'name'):
+            key = event.name
+            self.start_animation(key)
         
     def _on_close(self, event):
         """Handle figure close event"""
@@ -405,6 +405,7 @@ class AnimationManager:
         if plt.fignum_exists(self.fig.number):
             plt.close(self.fig)
 
+
 def main():
     print("Interactive Animation Controls:")
     print("Press '1' for Animation 1: Moving Sine Wave")
@@ -423,6 +424,7 @@ def main():
         print(f"Error: {str(e)}")
     finally:
         manager.cleanup()
+
 
 if __name__ == "__main__":
     main()
