@@ -11,6 +11,9 @@ import keyboard  # optional
 from scipy.fft import fft, fftfreq
 import random
 import string
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+
 
 # --------------------------------------------------
 #  1) COMMON AUDIO MANAGER
@@ -119,9 +122,6 @@ class VisualizationBase:
 # --------------------------------------------------
 #  3) TITLE SCREEN CLASS
 # --------------------------------------------------
-from matplotlib.colors import Normalize
-from matplotlib.cm import ScalarMappable
-
 class TitleScreen(VisualizationBase):
     """
     Displays a background image and usage instructions.
@@ -184,6 +184,7 @@ class TitleScreen(VisualizationBase):
             self.aspect_ratio / 2.0, top_y - 0.15,
             "Press 1 for Dancing Polar Visualizer\n"
             "Press 2 for 3D Wireframe Visualizer\n"
+            "Press '0' to come back here\n"
             "Press 'q' or 'Esc' to quit\n\n"
             "Press a letter key (A..Z) on this screen to select an input device\n"
             "(See device list in terminal)",
@@ -473,7 +474,7 @@ class VisualizationManager:
         if event.key in ['q', 'escape']:
             self.cleanup_and_close()
 
-        # If on the title screen, handle letter keys A..Z for device
+        # If currently on the title screen
         if self.active_screen == self.title_screen:
             if event.key is not None:
                 letter = event.key.upper()
@@ -493,11 +494,15 @@ class VisualizationManager:
                 self.switch_to(self.viz2)
 
         else:
-            # If in a visualization, pressing 1 or 2 can switch between them
+            # If in a visualization, pressing 1 or 2 can switch
             if event.key == '1':
                 self.switch_to(self.viz1)
             elif event.key == '2':
                 self.switch_to(self.viz2)
+
+            # NEW: If the user presses '0', return to splash screen
+            if event.key == '0':
+                self.switch_to(self.title_screen)
 
     def switch_to(self, screen):
         if self.active_screen == screen:
@@ -529,5 +534,6 @@ if __name__ == "__main__":
     manager = VisualizationManager()
     print("Press '1' or '2' to switch from the splash screen to a visualization.")
     print("Press a letter key (A..Z) on the splash screen to select an input device (see list above).")
+    print("Press '0' to return to the splash screen from a visualization.")
     print("Press 'q' or 'Esc' to quit.")
     manager.show()
