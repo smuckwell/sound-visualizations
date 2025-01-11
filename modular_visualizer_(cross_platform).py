@@ -297,7 +297,7 @@ class WireframeFFTVisualizer(VisualizationBase):
         self.samplerate = audio_manager.samplerate
         self.CHUNK = 1024
         self.FREQ_LIMIT_LOW = 20
-        self.FREQ_LIMIT_HIGH = 20000
+        self.FREQ_LIMIT_HIGH = 25000
         self.HISTORY_SIZE = 100
         self.MAX_ROTATION_SPEED = 10.0
         self.MIN_ROTATION_SPEED = 1.0
