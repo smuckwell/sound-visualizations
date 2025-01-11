@@ -15,10 +15,10 @@ loopback = mic.recorder(samplerate=48000, channels=2, blocksize=4096)
 sample_rate = 48000  # Hz
 channels = 2
 min_freq = 20  # Minimum audible frequency in Hz
-max_freq = 8000  # Maximum frequency for visualization
+max_freq = 400  # Maximum frequency for visualization
 height_scale = 4  # Scale factor for visualization
 polar_radial_distance_scale = 20.0
-polar_marker_size_scale = 80.0
+polar_marker_size_scale = 20.0
 
 visualization_title = 'Dancing Polar Visualizer'
 
