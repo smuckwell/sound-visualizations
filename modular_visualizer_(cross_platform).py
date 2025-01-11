@@ -90,6 +90,7 @@ class AudioManager:
                 data = data[:num_frames, :]
             return data
 
+
 # --------------------------------------------------
 #  2) BASE VISUALIZATION CLASS
 # --------------------------------------------------
@@ -113,14 +114,18 @@ class VisualizationBase:
     def update_frame(self, frame):
         pass
 
+
 # --------------------------------------------------
 #  3) TITLE SCREEN CLASS
 # --------------------------------------------------
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+
 class TitleScreen(VisualizationBase):
     """
     Displays a background image and usage instructions.
-    Waits for the user to press 1 or 2 (or q/Esc to quit).
-    This class does not use audio, so audio_manager is unused.
+    Cycles the instructions' text color through the same colormap as the visualizers.
+    Preserves aspect ratio, uses full vertical space (y=0..1).
     """
     def __init__(self, fig, audio_manager, image_url):
         super().__init__(fig, audio_manager)
@@ -128,7 +133,7 @@ class TitleScreen(VisualizationBase):
 
         # Create a full-figure Axes
         self.ax = self.fig.add_subplot(111)
-        self.ax.set_visible(False)  # Hidden until activated
+        self.ax.set_visible(False)
         self.ax.axis('off')
 
         # Download the image
@@ -136,44 +141,70 @@ class TitleScreen(VisualizationBase):
         img_data = BytesIO(r.content)
         self.img = plt.imread(img_data)
 
-        # We'll show it in update_frame once active
+        # We will preserve aspect ratio:
+        # y spans [0..1], width is ratio * 1 => [0..ratio].
+        self.img_height, self.img_width = self.img.shape[:2]
+        self.aspect_ratio = self.img_width / self.img_height
+
+        # Colormap for cycling text color
+        self.cmap = plt.get_cmap("turbo")
+        self.color_index = 0.0
+
+        # We'll create text objects in activate() so we can store references
+        self.title_text = None
+        self.instruction_text = None
 
     def activate(self):
         super().activate()
-        # Show the background image
-        self.ax.imshow(self.img, aspect='auto', extent=[0, 1, 0, 1], zorder=-1)
-        self.ax.set_position([0, 0, 1, 1])  # fill entire figure
 
-        # Place text instructions
-        # Adjust font sizes/positions as desired
-        self.ax.text(
-            0.5, 0.85,
-            "APRÈS-SKI PARTY VISUALIZER",
-            color="white", ha="center", va="center",
-            fontsize=26, fontweight='bold',
-            zorder=10
+        # Clear any previous drawings
+        self.ax.clear()
+        self.ax.axis('off')
+
+        # Show the image with alpha=0.5 to reduce opacity
+        # extent => [left, right, bottom, top]
+        # We use x from 0..aspect_ratio, y from 0..1
+        self.ax.imshow(
+            self.img,
+            extent=[0, self.aspect_ratio, 0, 1],
+            aspect='equal',
+            alpha=0.5
         )
-        self.ax.text(
-            0.5, 0.6,
+        # Adjust the axis limits to match our extent
+        self.ax.set_xlim(0, self.aspect_ratio)
+        self.ax.set_ylim(0, 1)
+
+        # Instructions text (we will cycle color in update_frame)
+        self.instruction_text = self.ax.text(
+            self.aspect_ratio / 2.0, 0.75,
             "Press 1 for the Dancing Polar Visualizer\n"
             "Press 2 for the 3D Wireframe Visualizer\n\n"
             "Press 'q' or 'Esc' to quit",
             color="yellow",
             ha="center", va="center",
-            fontsize=16,
+            fontsize=20,
             zorder=10
         )
 
     def update_frame(self, frame):
-        # Title screen is static, so no updates needed.
-        pass
+        # If not active, do nothing
+        if not self.active or self.instruction_text is None:
+            return
+
+        # Cycle color index
+        self.color_index += 0.01
+        if self.color_index >= 1.0:
+            self.color_index = 0.0
+
+        # Compute color from colormap
+        color = self.cmap(self.color_index)
+        # Update the instruction text color
+        self.instruction_text.set_color(color)
+
 
 # --------------------------------------------------
 #  4) FIRST VISUALIZATION (POLAR DANCING FFT)
 # --------------------------------------------------
-from matplotlib.colors import Normalize
-from matplotlib.cm import ScalarMappable
-
 class DancingPolarVisualizer(VisualizationBase):
     def __init__(self, fig, audio_manager):
         super().__init__(fig, audio_manager)
@@ -255,6 +286,7 @@ class DancingPolarVisualizer(VisualizationBase):
         self.polar_plot.set_offsets(np.c_[positive_phases, radial_positions])
         self.polar_plot.set_sizes(marker_sizes)
         self.polar_plot.set_color(polar_colors)
+
 
 # --------------------------------------------------
 #  5) SECOND VISUALIZATION (3D WIREFRAME FFT)
@@ -390,14 +422,12 @@ class VisualizationManager:
         self.viz1 = DancingPolarVisualizer(self.fig, self.audio_manager)
         self.viz2 = WireframeFFTVisualizer(self.fig, self.audio_manager)
 
-        # Keep them in a list for easier management if desired
         self.visualizations = [self.viz1, self.viz2]
 
-        # We'll track the current "screen" or "visualization" in a single variable
+        # Start with the TitleScreen
         self.active_screen = self.title_screen
-        self.active_screen.activate()  # Show the title screen first
+        self.active_screen.activate()
 
-        # Create a single animation
         self.anim = animation.FuncAnimation(
             self.fig,
             self.update,
@@ -405,14 +435,10 @@ class VisualizationManager:
             blit=False
         )
 
-        # Connect keypress
         self.cid_keypress = self.fig.canvas.mpl_connect("key_press_event", self.on_key_press)
-
-        # Window title
         self.fig.canvas.manager.set_window_title("Après-Ski Party Visualizer")
 
     def on_key_press(self, event):
-        # 'q' or 'escape' => quit
         if event.key in ['q', 'escape']:
             self.cleanup_and_close()
 
@@ -424,8 +450,7 @@ class VisualizationManager:
                 self.switch_to(self.viz2)
             return
         else:
-            # If we're already in a visualization, we can also allow
-            # switching (like the old behavior) if desired:
+            # If in a visualization, pressing 1 or 2 can switch as before
             if event.key == '1':
                 self.switch_to(self.viz1)
             elif event.key == '2':
@@ -458,6 +483,6 @@ class VisualizationManager:
 # --------------------------------------------------
 if __name__ == "__main__":
     manager = VisualizationManager()
-    print("Press '1' or '2' to switch between visualizations (when on title screen).")
+    print("Press '1' or '2' to switch from the splash screen to a visualization.")
     print("Press 'q' or 'Esc' to quit.")
     manager.show()
