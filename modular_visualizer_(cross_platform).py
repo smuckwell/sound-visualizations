@@ -288,7 +288,7 @@ class WireframeFFTVisualizer(VisualizationBase):
         self.samplerate = audio_manager.samplerate
         self.CHUNK = 1024
         self.FREQ_LIMIT_LOW = 20
-        self.FREQ_LIMIT_HIGH = 25000
+        self.FREQ_LIMIT_HIGH = 16000
         self.HISTORY_SIZE = 100
         self.MAX_ROTATION_SPEED = 10.0
         self.MIN_ROTATION_SPEED = 1.0
@@ -296,7 +296,7 @@ class WireframeFFTVisualizer(VisualizationBase):
         self.z_axis_scaling = 0.5
         self.current_rotation = 0.0
 
-        self.n_freqs = 512
+        self.n_freqs = 64
         self.x = np.linspace(-6, 6, self.n_freqs)
         self.y = np.linspace(-3, 3, self.HISTORY_SIZE)
         self.x, self.y = np.meshgrid(self.x, self.y)
