@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+import random
 import keyboard
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple, Set
@@ -299,16 +302,114 @@ class AudioHexbinAnimation(Animation):
         
     def cleanup(self) -> None:
         """Cleanup resources including audio"""
-        super().cleanup()
-        if hasattr(self, 'audio_manager'):
-            self.audio_manager.cleanup()
-        if self.colorbar is not None:
-            self.colorbar.remove()
-            self.colorbar = None
+        try:
+            super().cleanup()
+            if hasattr(self, 'audio_manager'):
+                self.audio_manager.cleanup()
+            if self.colorbar is not None:
+                self.colorbar.remove()
+                self.colorbar = None
+
+        except Exception as e:
+            print(f"Error in cleanup: {e}")
         
     def get_title(self) -> str:
         return 'Animation 3: Audio Frequency Visualization'
 
+class PolarAnimation(AudioHexbinAnimation):
+    """Animated polar plot with audio-driven movement using shared audio tools"""
+    def __init__(self, ax):
+        super().__init__(ax)
+        
+        # Inherit from AudioHexbinAnimation to use shared audio manager
+        self.audio_manager = AudioManager()
+
+        # Create a colormap
+        self.cmap = plt.get_cmap('turbo')
+        self.norm = Normalize(vmin=self.audio_manager.FREQ_LIMIT_LOW, vmax=self.audio_manager.FREQ_LIMIT_HIGH)
+        self.scalar_map = ScalarMappable(norm=self.norm, cmap=self.cmap)
+
+        self.polar_radial_distance_scale = 20.0
+        self.polar_marker_size_scale = 320.0
+
+        # Variables to track plot position and movement
+        self.current_pos = [0.5, 0.5]  # Start at center of screen
+        self.target_pos = [0.5, 0.5]
+        self.movement_speed = 0.1
+
+    def update_plot_position(self, current_pos, target_pos, speed):
+        """Update plot position towards a new target"""
+        dx = target_pos[0] - current_pos[0]
+        dy = target_pos[1] - current_pos[1]
+        distance = np.sqrt(dx**2 + dy**2)
+
+        if distance < 0.01:  # If close to target, get a new target
+            return current_pos, self.get_new_target_position()
+
+        # Move towards target
+        current_pos[0] += dx * speed
+        current_pos[1] += dy * speed
+
+        return current_pos, target_pos
+
+    def get_new_target_position(self):
+        """Generate new random position"""
+        padding = 0.2
+        return [random.uniform(padding, 1-padding), random.uniform(padding, 1-padding)]
+
+    def animate(self, frame: int) -> None:
+        """Update the polar plot with audio data"""
+        try:
+            # Read and process audio data
+            data = np.frombuffer(
+                self.audio_manager.stream.read(self.audio_manager.CHUNK, exception_on_overflow=False),
+                dtype=np.float32
+            )
+            
+            # Compute FFT and apply frequency mask
+            fft_data = np.abs(fft(data))[:self.audio_manager.CHUNK // 2]
+            fft_data = fft_data[self.audio_manager.freq_mask]
+            
+            # Apply smoothing
+            smoothing_factor = 0.7
+            fft_data = smoothing_factor * self.last_fft + (1 - smoothing_factor) * fft_data
+            self.last_fft = fft_data.copy()
+
+            # Normalize the frequency data
+            fft_max = np.max(fft_data)
+            if fft_max > 0:
+                fft_data = fft_data / fft_max
+
+            # Find dominant frequency
+            dominant_freq = self.audio_manager.filtered_freqs[np.argmax(fft_data)]
+
+            # Update movement speed based on dominant frequency
+            speed = np.clip(dominant_freq / self.audio_manager.FREQ_LIMIT_HIGH, 0.01, 0.1)
+
+            # Update plot position
+            self.current_pos, self.target_pos = self.update_plot_position(self.current_pos, self.target_pos, speed)
+
+            # Update plot size inversely with frequency
+            size_factor = 1 - (dominant_freq / self.audio_manager.FREQ_LIMIT_HIGH) * 0.5
+            self.ax.set_position([self.current_pos[0] - size_factor/2, 
+                                  self.current_pos[1] - size_factor/2, 
+                                  size_factor, 
+                                  size_factor])
+
+            # Update polar plot
+            marker_sizes = fft_data * self.polar_marker_size_scale
+            radial_positions = fft_data * self.polar_radial_distance_scale
+            polar_colors = self.scalar_map.to_rgba(self.audio_manager.filtered_freqs)
+
+            self.ax.clear()
+            self.ax.scatter(np.angle(fft_data), radial_positions, s=marker_sizes, c=polar_colors, cmap=self.cmap)
+            self._apply_persistent_settings()
+
+        except Exception as e:
+            print(f"Error in audio animation: {e}")
+
+    def get_title(self) -> str:
+        return 'Animation 4: Dancing Polar Visualizer'
 
 class AnimationManager:
     """Manages the creation and switching of animations"""
@@ -320,7 +421,8 @@ class AnimationManager:
         self.animations = {
             '1': lambda: SineWaveAnimation(self.ax),
             '2': lambda: ScatterAnimation(self.ax),
-            '3': lambda: AudioHexbinAnimation(self.ax)
+            '3': lambda: AudioHexbinAnimation(self.ax),
+            '4': lambda: PolarAnimation(self.ax)
         }
         self.active_keyboard_hooks: Set[str] = set()
         
@@ -393,7 +495,7 @@ class AnimationManager:
                 print(f"Warning: Failed to unhook key {key}: {str(e)}")
         
     def run(self) -> None:
-        self.start_animation('1')
+        self.start_animation('3')
         self.setup_keyboard_hooks()
         plt.show()
         
@@ -411,6 +513,7 @@ def main():
     print("Press '1' for Animation 1: Moving Sine Wave")
     print("Press '2' for Animation 2: Dancing Scatter Plot")
     print("Press '3' for Animation 3: Audio Visualization")
+    print("Press '4' for Animation 4: Dancing Polar Visualizer")
     print("Use mouse to interact:")
     print("- Right click and drag to pan")
     print("- Scroll to zoom")
