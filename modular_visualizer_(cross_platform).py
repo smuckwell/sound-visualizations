@@ -24,7 +24,7 @@ class AudioManager:
     It continuously records audio from the chosen device
     and stores blocks in a thread-safe queue.
     """
-    def __init__(self, device=None, channels=1, samplerate=44100, blocksize=1024):
+    def __init__(self, device=None, channels=1, samplerate=44100, blocksize=256):
         self.device = device
         self.channels = channels
         self.samplerate = samplerate
@@ -46,7 +46,7 @@ class AudioManager:
             return
         self.running = True
         self.stream = sd.InputStream(
-            device=self.device,   # can be None or int or str
+            device=self.device,
             channels=self.channels,
             samplerate=self.samplerate,
             blocksize=self.blocksize,
@@ -67,32 +67,21 @@ class AudioManager:
                 self.audio_queue.get_nowait()
 
     def read_frames(self, num_frames=None):
-        """
-        Returns a numpy array of shape (frames, channels).
-        If no data is available, returns an empty array.
-        """
         with self.lock:
+            # Discard older blocks, keep only newest if multiple accumulate
+            while self.audio_queue.qsize() > 1:
+                self.audio_queue.get_nowait()
+
             if self.audio_queue.empty():
                 return np.empty((0, self.channels), dtype=np.float32)
 
+            block = self.audio_queue.get_nowait()
             if num_frames is None:
-                block = self.audio_queue.get_nowait()
                 return block
-
-            blocks = []
-            accumulated = 0
-            while accumulated < num_frames and not self.audio_queue.empty():
-                block = self.audio_queue.get_nowait()
-                blocks.append(block)
-                accumulated += block.shape[0]
-
-            if len(blocks) == 0:
-                return np.empty((0, self.channels), dtype=np.float32)
-
-            data = np.concatenate(blocks, axis=0)
-            if data.shape[0] > num_frames:
-                data = data[:num_frames, :]
-            return data
+            else:
+                if block.shape[0] > num_frames:
+                    block = block[:num_frames, :]
+                return block
 
 
 # --------------------------------------------------
@@ -123,43 +112,31 @@ class VisualizationBase:
 #  3) TITLE SCREEN CLASS
 # --------------------------------------------------
 class TitleScreen(VisualizationBase):
-    """
-    Displays a background image and usage instructions.
-    The device list is no longer drawn on screen (it's shown in the terminal).
-    """
     def __init__(self, fig, audio_manager, image_url):
         super().__init__(fig, audio_manager)
         self.image_url = image_url
 
-        # Create a full-figure Axes
         self.ax = self.fig.add_subplot(111)
         self.ax.set_visible(False)
         self.ax.axis('off')
 
-        # Download the image
         r = requests.get(self.image_url)
         img_data = BytesIO(r.content)
         self.img = plt.imread(img_data)
 
-        # Preserve aspect ratio
         self.img_height, self.img_width = self.img.shape[:2]
         self.aspect_ratio = self.img_width / self.img_height
 
-        # For color-cycling text
         self.cmap = plt.get_cmap("turbo")
         self.color_index = 0.0
-
-        # We'll create text objects in activate() so we can store references
         self.instruction_text = None
 
     def activate(self):
         super().activate()
 
-        # Clear previous drawings
         self.ax.clear()
         self.ax.axis('off')
 
-        # Show background image (alpha=0.5)
         self.ax.imshow(
             self.img,
             extent=[0, self.aspect_ratio, 0, 1],
@@ -170,7 +147,6 @@ class TitleScreen(VisualizationBase):
         self.ax.set_ylim(0, 1)
 
         top_y = 0.85
-        # Title text
         self.ax.text(
             self.aspect_ratio / 2.0, top_y,
             "APRÈS-SKI PARTY VISUALIZER",
@@ -179,7 +155,6 @@ class TitleScreen(VisualizationBase):
             zorder=10
         )
 
-        # Instructions text
         self.instruction_text = self.ax.text(
             self.aspect_ratio / 2.0, top_y - 0.15,
             "Press 1 for Dancing Polar Visualizer\n"
@@ -195,17 +170,15 @@ class TitleScreen(VisualizationBase):
         )
 
     def update_frame(self, frame):
-        # If not active, do nothing
         if not self.active:
             return
 
-        # Cycle color index for the instructions
         self.color_index += 0.01
         if self.color_index >= 1.0:
             self.color_index = 0.0
 
         color = self.cmap(self.color_index)
-        if self.instruction_text is not None:
+        if self.instruction_text:
             self.instruction_text.set_color(color)
 
 
@@ -220,7 +193,7 @@ class DancingPolarVisualizer(VisualizationBase):
         self.max_freq = 16000
         self.height_scale = 4
         self.polar_radial_distance_scale = 20.0
-        self.polar_marker_size_scale = 1000.0
+        self.polar_marker_size_scale = 1500.0
         self.background_color = 'white'
         self.current_pos = [0.5, 0.5]
         self.target_pos = [0.5, 0.5]
@@ -230,9 +203,9 @@ class DancingPolarVisualizer(VisualizationBase):
         self.ax.axis('off')
         self.fig.patch.set_facecolor(self.background_color)
 
-        self.initial_phases = np.zeros(1024)
-        self.initial_radial = np.zeros(1024)
-        self.polar_plot = self.ax.scatter(self.initial_phases, self.initial_radial)
+        self.polar_plot = self.ax.scatter(
+            np.zeros(1024), np.zeros(1024)
+        )
         self.ax.set_ylim(0, 100)
 
         self.cmap = plt.get_cmap('turbo')
@@ -260,22 +233,31 @@ class DancingPolarVisualizer(VisualizationBase):
         if not self.active:
             return
 
+        # read 1024 frames
         audio_data = self.audio_manager.read_frames(num_frames=1024)
         if audio_data.shape[0] < 1:
             return
 
         mono = audio_data[:, 0]
+        block_len = len(mono)
+
+        # FFT up to half
         fft_data = np.fft.fft(mono)
-        freqs = np.fft.fftfreq(len(fft_data), 1 / self.sample_rate)
-        half = len(fft_data) // 2
+        half_len = block_len // 2
+        fft_data = np.abs(fft_data)[:half_len]
+        freqs = np.fft.fftfreq(block_len, 1 / self.sample_rate)[:half_len]
 
-        positive_freqs = freqs[:half]
-        positive_fft_data = np.abs(fft_data[:half]) * self.height_scale
-        positive_phases = np.angle(fft_data[:half])
+        # no mask needed here, but if you want, do a bound check that won't mismatch
+        # e.g. mask = (freqs >= self.min_freq) & (freqs <= self.max_freq)
+        # fft_data = fft_data[mask]
+        # freqs = freqs[mask]
 
-        dominant_freq = positive_freqs[np.argmax(positive_fft_data)]
+        # find dominant freq
+        if fft_data.size == 0:
+            return
+        dominant_freq = freqs[np.argmax(fft_data)]
+
         speed = np.clip(dominant_freq / self.max_freq, 0.01, 0.1)
-
         self._update_plot_position(speed)
 
         size_factor = 1 - (dominant_freq / self.max_freq) * 0.5
@@ -286,11 +268,13 @@ class DancingPolarVisualizer(VisualizationBase):
             size_factor
         ])
 
-        marker_sizes = positive_fft_data * self.polar_marker_size_scale
-        radial_positions = positive_fft_data * self.polar_radial_distance_scale
-        polar_colors = self.scalar_map.to_rgba(positive_freqs)
+        marker_sizes = fft_data * self.polar_marker_size_scale
+        radial_positions = fft_data * self.polar_radial_distance_scale
+        polar_colors = self.scalar_map.to_rgba(freqs)
 
-        self.polar_plot.set_offsets(np.c_[positive_phases, radial_positions])
+        phases = np.angle(np.fft.fft(mono))[:half_len]
+
+        self.polar_plot.set_offsets(np.c_[phases, radial_positions])
         self.polar_plot.set_sizes(marker_sizes)
         self.polar_plot.set_color(polar_colors)
 
@@ -346,23 +330,32 @@ class WireframeFFTVisualizer(VisualizationBase):
             return
 
         mono = audio_data[:, 0]
-        fft_data = np.abs(fft(mono))[: self.CHUNK // 2]
-        freqs = fftfreq(self.CHUNK, 1 / self.samplerate)[: self.CHUNK // 2]
+        block_len = len(mono)
 
+        fft_data = np.fft.fft(mono)
+        half_len = block_len // 2
+        fft_data = np.abs(fft_data)[:half_len]
+        freqs = np.fft.fftfreq(block_len, 1 / self.samplerate)[:half_len]
+
+        # Now create a mask that matches the actual length
         mask = (freqs >= self.FREQ_LIMIT_LOW) & (freqs <= self.FREQ_LIMIT_HIGH)
         masked_fft_data = fft_data[mask]
         masked_freqs = freqs[mask]
 
-        # Pad or slice
-        if len(masked_fft_data) > self.n_freqs:
+        # If there's no data after mask, skip
+        if masked_fft_data.size == 0:
+            return
+
+        # If more than self.n_freqs, slice or pad
+        if masked_fft_data.size > self.n_freqs:
             masked_fft_data = masked_fft_data[: self.n_freqs]
         else:
             temp = np.zeros(self.n_freqs)
-            temp[: len(masked_fft_data)] = masked_fft_data
+            temp[: masked_fft_data.size] = masked_fft_data
             masked_fft_data = temp
 
-        dominant_freq = self._get_dominant_frequency(masked_fft_data, masked_freqs)
-        rotation_speed = self._frequency_to_rotation_speed(dominant_freq)
+        dom_freq = self._get_dominant_frequency(masked_fft_data, masked_freqs)
+        rotation_speed = self._frequency_to_rotation_speed(dom_freq)
 
         self.current_rotation += rotation_speed
         if self.current_rotation >= 360:
@@ -418,14 +411,12 @@ class VisualizationManager:
     def __init__(self):
         self.fig = plt.figure(figsize=(8, 6))
 
-        # 1) Gather the list of available input devices with sounddevice.
         self.available_devices = []
         all_devices = sd.query_devices()
         for i, d in enumerate(all_devices):
             if d["max_input_channels"] > 0:
                 self.available_devices.append((i, d["name"]))
 
-        # 2) Print them in the terminal with letter mappings A..Z
         letters = string.ascii_uppercase
         print("Available Audio Input Devices:")
         for i, (dev_index, dev_name) in enumerate(self.available_devices):
@@ -433,37 +424,29 @@ class VisualizationManager:
                 break
             print(f"  {letters[i]} -> index={dev_index}, name='{dev_name}'")
 
-        # 3) Create AudioManager with default device=None
         self.audio_manager = AudioManager(
-            device=None,   # uses system default
+            device=None,
             channels=1,
             samplerate=44100,
-            blocksize=1024
+            blocksize=256
         )
         self.audio_manager.start()
 
-        # Title screen (no device list displayed there)
         title_url = "https://soundvisualizations.blob.core.windows.net/media/2025.01.11-Apres_Ski_Party_Title.png"
-        self.title_screen = TitleScreen(
-            self.fig,
-            self.audio_manager,
-            title_url
-        )
+        self.title_screen = TitleScreen(self.fig, self.audio_manager, title_url)
 
-        # Create two visualizations
         self.viz1 = DancingPolarVisualizer(self.fig, self.audio_manager)
         self.viz2 = WireframeFFTVisualizer(self.fig, self.audio_manager)
 
         self.visualizations = [self.viz1, self.viz2]
 
-        # Start with the TitleScreen
         self.active_screen = self.title_screen
         self.active_screen.activate()
 
         self.anim = animation.FuncAnimation(
             self.fig,
             self.update,
-            interval=20,
+            interval=10,  # faster refresh
             blit=False
         )
 
@@ -474,7 +457,6 @@ class VisualizationManager:
         if event.key in ['q', 'escape']:
             self.cleanup_and_close()
 
-        # If currently on the title screen
         if self.active_screen == self.title_screen:
             if event.key is not None:
                 letter = event.key.upper()
@@ -487,20 +469,16 @@ class VisualizationManager:
                         self.audio_manager.device = dev_index
                         self.audio_manager.start()
 
-            # Also handle digits 1..2 for normal visualizations
             if event.key == '1':
                 self.switch_to(self.viz1)
             elif event.key == '2':
                 self.switch_to(self.viz2)
-
         else:
-            # If in a visualization, pressing 1 or 2 can switch
             if event.key == '1':
                 self.switch_to(self.viz1)
             elif event.key == '2':
                 self.switch_to(self.viz2)
 
-            # NEW: If the user presses '0', return to splash screen
             if event.key == '0':
                 self.switch_to(self.title_screen)
 
@@ -527,9 +505,6 @@ class VisualizationManager:
         plt.show()
 
 
-# --------------------------------------------------
-#  7) MAIN
-# --------------------------------------------------
 if __name__ == "__main__":
     manager = VisualizationManager()
     print("Press '1' or '2' to switch from the splash screen to a visualization.")
