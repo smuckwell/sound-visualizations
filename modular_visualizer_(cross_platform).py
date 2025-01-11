@@ -190,10 +190,11 @@ class DancingPolarVisualizer(VisualizationBase):
         super().__init__(fig, audio_manager)
         self.sample_rate = audio_manager.samplerate
         self.min_freq = 20
-        self.max_freq = 16000
+        self.max_freq = 6000
         self.height_scale = 4
-        self.polar_radial_distance_scale = 20.0
-        self.polar_marker_size_scale = 1500.0
+        self.polar_radial_distance_scale = 30.0
+        self.polar_marker_size_increase = 80.0
+        self.polar_marker_size_scale = 2000.0
         self.background_color = 'white'
         self.current_pos = [0.5, 0.5]
         self.target_pos = [0.5, 0.5]
@@ -268,7 +269,7 @@ class DancingPolarVisualizer(VisualizationBase):
             size_factor
         ])
 
-        marker_sizes = fft_data * self.polar_marker_size_scale
+        marker_sizes = fft_data * self.polar_marker_size_scale + self.polar_marker_size_increase
         radial_positions = fft_data * self.polar_radial_distance_scale
         polar_colors = self.scalar_map.to_rgba(freqs)
 
@@ -290,8 +291,8 @@ class WireframeFFTVisualizer(VisualizationBase):
         self.FREQ_LIMIT_LOW = 20
         self.FREQ_LIMIT_HIGH = 16000
         self.HISTORY_SIZE = 100
-        self.MAX_ROTATION_SPEED = 10.0
-        self.MIN_ROTATION_SPEED = 1.0
+        self.MAX_ROTATION_SPEED = 20.0
+        self.MIN_ROTATION_SPEED = 2.0
 
         self.z_axis_scaling = 0.5
         self.current_rotation = 0.0
@@ -401,7 +402,7 @@ class WireframeFFTVisualizer(VisualizationBase):
         self.ax.view_init(30, self.current_rotation)
         self.ax.set_xlim(-6, 6)
         self.ax.set_ylim(-3, 3)
-        self.ax.set_zlim(0, 1)
+        self.ax.set_zlim(0.9, 1.9)
 
 
 # --------------------------------------------------
