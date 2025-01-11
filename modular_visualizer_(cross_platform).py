@@ -220,7 +220,7 @@ class DancingPolarVisualizer(VisualizationBase):
         self.max_freq = 16000
         self.height_scale = 4
         self.polar_radial_distance_scale = 20.0
-        self.polar_marker_size_scale = 320.0
+        self.polar_marker_size_scale = 1000.0
         self.background_color = 'white'
         self.current_pos = [0.5, 0.5]
         self.target_pos = [0.5, 0.5]
