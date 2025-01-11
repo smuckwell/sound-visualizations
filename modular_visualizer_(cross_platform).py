@@ -125,14 +125,11 @@ from matplotlib.cm import ScalarMappable
 class TitleScreen(VisualizationBase):
     """
     Displays a background image and usage instructions.
-    Also lists input devices and shows letter mappings.
+    The device list is no longer drawn on screen (it's shown in the terminal).
     """
-    def __init__(self, fig, audio_manager, image_url, device_list):
+    def __init__(self, fig, audio_manager, image_url):
         super().__init__(fig, audio_manager)
         self.image_url = image_url
-
-        # This is the list of (index, name) for input devices
-        self.device_list = device_list
 
         # Create a full-figure Axes
         self.ax = self.fig.add_subplot(111)
@@ -154,7 +151,6 @@ class TitleScreen(VisualizationBase):
 
         # We'll create text objects in activate() so we can store references
         self.instruction_text = None
-        self.device_text = None
 
     def activate(self):
         super().activate()
@@ -173,19 +169,8 @@ class TitleScreen(VisualizationBase):
         self.ax.set_xlim(0, self.aspect_ratio)
         self.ax.set_ylim(0, 1)
 
-        # Build a device list text
-        # We'll map letters 'A', 'B', 'C', ... to each device in the list.
-        letters = string.ascii_uppercase
-        device_lines = ["Audio Input Devices (Press A..Z to select):"]
-        for i, (dev_index, dev_name) in enumerate(self.device_list):
-            if i >= 26:  # only have 26 letters
-                break
-            device_lines.append(f"{letters[i]} -> {dev_name}")
-
-        device_text_str = "\n".join(device_lines)
-
-        # Instructions text
         top_y = 0.85
+        # Title text
         self.ax.text(
             self.aspect_ratio / 2.0, top_y,
             "APRÈS-SKI PARTY VISUALIZER",
@@ -194,23 +179,17 @@ class TitleScreen(VisualizationBase):
             zorder=10
         )
 
+        # Instructions text
         self.instruction_text = self.ax.text(
             self.aspect_ratio / 2.0, top_y - 0.15,
             "Press 1 for Dancing Polar Visualizer\n"
             "Press 2 for 3D Wireframe Visualizer\n"
-            "Press 'q' or 'Esc' to quit",
+            "Press 'q' or 'Esc' to quit\n\n"
+            "Press a letter key (A..Z) on this screen to select an input device\n"
+            "(See device list in terminal)",
             color="yellow",
             ha="center", va="center",
             fontsize=16,
-            zorder=10
-        )
-
-        self.device_text = self.ax.text(
-            self.aspect_ratio / 2.0, 0.3,
-            device_text_str,
-            color="cyan",
-            ha="center", va="center",
-            fontsize=14,
             zorder=10
         )
 
@@ -227,10 +206,6 @@ class TitleScreen(VisualizationBase):
         color = self.cmap(self.color_index)
         if self.instruction_text is not None:
             self.instruction_text.set_color(color)
-
-        # Optionally also cycle color for device_text
-        if self.device_text is not None:
-            self.device_text.set_color(color)
 
 
 # --------------------------------------------------
@@ -442,16 +417,22 @@ class VisualizationManager:
     def __init__(self):
         self.fig = plt.figure(figsize=(8, 6))
 
-        # First, gather the list of available input devices with sounddevice.
-        # We'll store only those that have max_input_channels > 0.
+        # 1) Gather the list of available input devices with sounddevice.
         self.available_devices = []
         all_devices = sd.query_devices()
         for i, d in enumerate(all_devices):
             if d["max_input_channels"] > 0:
-                # We'll store (device_index, device_name)
                 self.available_devices.append((i, d["name"]))
 
-        # Create the AudioManager with default device=None
+        # 2) Print them in the terminal with letter mappings A..Z
+        letters = string.ascii_uppercase
+        print("Available Audio Input Devices:")
+        for i, (dev_index, dev_name) in enumerate(self.available_devices):
+            if i >= 26:
+                break
+            print(f"  {letters[i]} -> index={dev_index}, name='{dev_name}'")
+
+        # 3) Create AudioManager with default device=None
         self.audio_manager = AudioManager(
             device=None,   # uses system default
             channels=1,
@@ -460,13 +441,12 @@ class VisualizationManager:
         )
         self.audio_manager.start()
 
-        # Create Title Screen
+        # Title screen (no device list displayed there)
         title_url = "https://soundvisualizations.blob.core.windows.net/media/2025.01.11-Apres_Ski_Party_Title.png"
         self.title_screen = TitleScreen(
             self.fig,
             self.audio_manager,
-            title_url,
-            device_list=self.available_devices
+            title_url
         )
 
         # Create two visualizations
@@ -482,7 +462,7 @@ class VisualizationManager:
         self.anim = animation.FuncAnimation(
             self.fig,
             self.update,
-            interval=20,  # ms
+            interval=20,
             blit=False
         )
 
@@ -490,34 +470,30 @@ class VisualizationManager:
         self.fig.canvas.manager.set_window_title("Après-Ski Party Visualizer")
 
     def on_key_press(self, event):
-        # quit if 'q' or 'escape'
         if event.key in ['q', 'escape']:
             self.cleanup_and_close()
 
-        # If on the title screen, we also watch for letter keys (A..Z) to pick devices
+        # If on the title screen, handle letter keys A..Z for device
         if self.active_screen == self.title_screen:
-            # handle letters A..Z
             if event.key is not None:
                 letter = event.key.upper()
                 if letter in string.ascii_uppercase:
-                    index = ord(letter) - ord('A')  # A->0, B->1, ...
+                    index = ord(letter) - ord('A')
                     if 0 <= index < len(self.available_devices):
-                        # valid device selection
                         dev_index, dev_name = self.available_devices[index]
                         print(f"Switching audio device to {dev_name} (index={dev_index})")
-                        # Stop, set device, start
                         self.audio_manager.stop()
                         self.audio_manager.device = dev_index
                         self.audio_manager.start()
 
-            # Also handle digits 1..2 for the normal visualizations
+            # Also handle digits 1..2 for normal visualizations
             if event.key == '1':
                 self.switch_to(self.viz1)
             elif event.key == '2':
                 self.switch_to(self.viz2)
 
         else:
-            # If in a visualization, pressing 1 or 2 can switch as before
+            # If in a visualization, pressing 1 or 2 can switch between them
             if event.key == '1':
                 self.switch_to(self.viz1)
             elif event.key == '2':
@@ -545,12 +521,13 @@ class VisualizationManager:
         plt.tight_layout()
         plt.show()
 
+
 # --------------------------------------------------
 #  7) MAIN
 # --------------------------------------------------
 if __name__ == "__main__":
     manager = VisualizationManager()
     print("Press '1' or '2' to switch from the splash screen to a visualization.")
-    print("Press a letter key (A..Z) on the splash screen to select an input device.")
+    print("Press a letter key (A..Z) on the splash screen to select an input device (see list above).")
     print("Press 'q' or 'Esc' to quit.")
     manager.show()
