@@ -7,9 +7,10 @@ import matplotlib.animation as animation
 import sounddevice as sd
 import queue
 import threading
-import keyboard  # for quick key detection (optional on Windows)
+import keyboard  # optional
 from scipy.fft import fft, fftfreq
 import random
+import string
 
 # --------------------------------------------------
 #  1) COMMON AUDIO MANAGER
@@ -42,7 +43,7 @@ class AudioManager:
             return
         self.running = True
         self.stream = sd.InputStream(
-            device=self.device,
+            device=self.device,   # can be None or int or str
             channels=self.channels,
             samplerate=self.samplerate,
             blocksize=self.blocksize,
@@ -124,12 +125,14 @@ from matplotlib.cm import ScalarMappable
 class TitleScreen(VisualizationBase):
     """
     Displays a background image and usage instructions.
-    Cycles the instructions' text color through the same colormap as the visualizers.
-    Preserves aspect ratio, uses full vertical space (y=0..1).
+    Also lists input devices and shows letter mappings.
     """
-    def __init__(self, fig, audio_manager, image_url):
+    def __init__(self, fig, audio_manager, image_url, device_list):
         super().__init__(fig, audio_manager)
         self.image_url = image_url
+
+        # This is the list of (index, name) for input devices
+        self.device_list = device_list
 
         # Create a full-figure Axes
         self.ax = self.fig.add_subplot(111)
@@ -141,65 +144,93 @@ class TitleScreen(VisualizationBase):
         img_data = BytesIO(r.content)
         self.img = plt.imread(img_data)
 
-        # We will preserve aspect ratio:
-        # y spans [0..1], width is ratio * 1 => [0..ratio].
+        # Preserve aspect ratio
         self.img_height, self.img_width = self.img.shape[:2]
         self.aspect_ratio = self.img_width / self.img_height
 
-        # Colormap for cycling text color
+        # For color-cycling text
         self.cmap = plt.get_cmap("turbo")
         self.color_index = 0.0
 
         # We'll create text objects in activate() so we can store references
-        self.title_text = None
         self.instruction_text = None
+        self.device_text = None
 
     def activate(self):
         super().activate()
 
-        # Clear any previous drawings
+        # Clear previous drawings
         self.ax.clear()
         self.ax.axis('off')
 
-        # Show the image with alpha=0.5 to reduce opacity
-        # extent => [left, right, bottom, top]
-        # We use x from 0..aspect_ratio, y from 0..1
+        # Show background image (alpha=0.5)
         self.ax.imshow(
             self.img,
             extent=[0, self.aspect_ratio, 0, 1],
             aspect='equal',
             alpha=0.5
         )
-        # Adjust the axis limits to match our extent
         self.ax.set_xlim(0, self.aspect_ratio)
         self.ax.set_ylim(0, 1)
 
-        # Instructions text (we will cycle color in update_frame)
+        # Build a device list text
+        # We'll map letters 'A', 'B', 'C', ... to each device in the list.
+        letters = string.ascii_uppercase
+        device_lines = ["Audio Input Devices (Press A..Z to select):"]
+        for i, (dev_index, dev_name) in enumerate(self.device_list):
+            if i >= 26:  # only have 26 letters
+                break
+            device_lines.append(f"{letters[i]} -> {dev_name}")
+
+        device_text_str = "\n".join(device_lines)
+
+        # Instructions text
+        top_y = 0.85
+        self.ax.text(
+            self.aspect_ratio / 2.0, top_y,
+            "APRÈS-SKI PARTY VISUALIZER",
+            color="white", ha="center", va="center",
+            fontsize=24, fontweight='bold',
+            zorder=10
+        )
+
         self.instruction_text = self.ax.text(
-            self.aspect_ratio / 2.0, 0.75,
-            "Press 1 for the Dancing Polar Visualizer\n"
-            "Press 2 for the 3D Wireframe Visualizer\n\n"
+            self.aspect_ratio / 2.0, top_y - 0.15,
+            "Press 1 for Dancing Polar Visualizer\n"
+            "Press 2 for 3D Wireframe Visualizer\n"
             "Press 'q' or 'Esc' to quit",
             color="yellow",
             ha="center", va="center",
-            fontsize=20,
+            fontsize=16,
+            zorder=10
+        )
+
+        self.device_text = self.ax.text(
+            self.aspect_ratio / 2.0, 0.3,
+            device_text_str,
+            color="cyan",
+            ha="center", va="center",
+            fontsize=14,
             zorder=10
         )
 
     def update_frame(self, frame):
         # If not active, do nothing
-        if not self.active or self.instruction_text is None:
+        if not self.active:
             return
 
-        # Cycle color index
+        # Cycle color index for the instructions
         self.color_index += 0.01
         if self.color_index >= 1.0:
             self.color_index = 0.0
 
-        # Compute color from colormap
         color = self.cmap(self.color_index)
-        # Update the instruction text color
-        self.instruction_text.set_color(color)
+        if self.instruction_text is not None:
+            self.instruction_text.set_color(color)
+
+        # Optionally also cycle color for device_text
+        if self.device_text is not None:
+            self.device_text.set_color(color)
 
 
 # --------------------------------------------------
@@ -371,17 +402,9 @@ class WireframeFFTVisualizer(VisualizationBase):
 
         smoothed_fft = np.log1p(smoothed_fft) * self.z_axis_scaling * 4
 
-        # Convert amplitude to decibels
-        # (Ensure no zero values by adding a tiny epsilon)
         db_spectrum = 20 * np.log10(smoothed_fft + 1e-6)
-
-        # Clip between -80 dB and 0 dB
         db_spectrum = np.clip(db_spectrum, -80, 0)
-
-        # Normalize from [-80..0] to [0..1]
         db_spectrum = (db_spectrum + 80) / 80
-
-        # Optionally, multiply for final scale
         db_spectrum *= self.z_axis_scaling * 4
 
         self.z = np.roll(self.z, -1, axis=0)
@@ -411,6 +434,7 @@ class WireframeFFTVisualizer(VisualizationBase):
         self.ax.set_ylim(-3, 3)
         self.ax.set_zlim(0, 1)
 
+
 # --------------------------------------------------
 #  6) VISUALIZATION MANAGER
 # --------------------------------------------------
@@ -418,9 +442,18 @@ class VisualizationManager:
     def __init__(self):
         self.fig = plt.figure(figsize=(8, 6))
 
-        # Single AudioManager
+        # First, gather the list of available input devices with sounddevice.
+        # We'll store only those that have max_input_channels > 0.
+        self.available_devices = []
+        all_devices = sd.query_devices()
+        for i, d in enumerate(all_devices):
+            if d["max_input_channels"] > 0:
+                # We'll store (device_index, device_name)
+                self.available_devices.append((i, d["name"]))
+
+        # Create the AudioManager with default device=None
         self.audio_manager = AudioManager(
-            device=None,
+            device=None,   # uses system default
             channels=1,
             samplerate=44100,
             blocksize=1024
@@ -429,7 +462,12 @@ class VisualizationManager:
 
         # Create Title Screen
         title_url = "https://soundvisualizations.blob.core.windows.net/media/2025.01.11-Apres_Ski_Party_Title.png"
-        self.title_screen = TitleScreen(self.fig, self.audio_manager, title_url)
+        self.title_screen = TitleScreen(
+            self.fig,
+            self.audio_manager,
+            title_url,
+            device_list=self.available_devices
+        )
 
         # Create two visualizations
         self.viz1 = DancingPolarVisualizer(self.fig, self.audio_manager)
@@ -452,16 +490,32 @@ class VisualizationManager:
         self.fig.canvas.manager.set_window_title("Après-Ski Party Visualizer")
 
     def on_key_press(self, event):
+        # quit if 'q' or 'escape'
         if event.key in ['q', 'escape']:
             self.cleanup_and_close()
 
-        # If currently on title screen
+        # If on the title screen, we also watch for letter keys (A..Z) to pick devices
         if self.active_screen == self.title_screen:
+            # handle letters A..Z
+            if event.key is not None:
+                letter = event.key.upper()
+                if letter in string.ascii_uppercase:
+                    index = ord(letter) - ord('A')  # A->0, B->1, ...
+                    if 0 <= index < len(self.available_devices):
+                        # valid device selection
+                        dev_index, dev_name = self.available_devices[index]
+                        print(f"Switching audio device to {dev_name} (index={dev_index})")
+                        # Stop, set device, start
+                        self.audio_manager.stop()
+                        self.audio_manager.device = dev_index
+                        self.audio_manager.start()
+
+            # Also handle digits 1..2 for the normal visualizations
             if event.key == '1':
                 self.switch_to(self.viz1)
             elif event.key == '2':
                 self.switch_to(self.viz2)
-            return
+
         else:
             # If in a visualization, pressing 1 or 2 can switch as before
             if event.key == '1':
@@ -497,5 +551,6 @@ class VisualizationManager:
 if __name__ == "__main__":
     manager = VisualizationManager()
     print("Press '1' or '2' to switch from the splash screen to a visualization.")
+    print("Press a letter key (A..Z) on the splash screen to select an input device.")
     print("Press 'q' or 'Esc' to quit.")
     manager.show()
