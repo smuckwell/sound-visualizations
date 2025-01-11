@@ -296,8 +296,8 @@ class WireframeFFTVisualizer(VisualizationBase):
         super().__init__(fig, audio_manager)
         self.samplerate = audio_manager.samplerate
         self.CHUNK = 1024
-        self.FREQ_LIMIT_LOW = 1
-        self.FREQ_LIMIT_HIGH = 5000
+        self.FREQ_LIMIT_LOW = 20
+        self.FREQ_LIMIT_HIGH = 20000
         self.HISTORY_SIZE = 100
         self.MAX_ROTATION_SPEED = 10.0
         self.MIN_ROTATION_SPEED = 1.0
@@ -371,8 +371,21 @@ class WireframeFFTVisualizer(VisualizationBase):
 
         smoothed_fft = np.log1p(smoothed_fft) * self.z_axis_scaling * 4
 
+        # Convert amplitude to decibels
+        # (Ensure no zero values by adding a tiny epsilon)
+        db_spectrum = 20 * np.log10(smoothed_fft + 1e-6)
+
+        # Clip between -80 dB and 0 dB
+        db_spectrum = np.clip(db_spectrum, -80, 0)
+
+        # Normalize from [-80..0] to [0..1]
+        db_spectrum = (db_spectrum + 80) / 80
+
+        # Optionally, multiply for final scale
+        db_spectrum *= self.z_axis_scaling * 4
+
         self.z = np.roll(self.z, -1, axis=0)
-        self.z[-1, :] = smoothed_fft
+        self.z[-1, :] = db_spectrum
 
         self.ax.clear()
         self.ax.axis('off')
