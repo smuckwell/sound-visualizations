@@ -15,10 +15,11 @@ loopback = mic.recorder(samplerate=48000, channels=2, blocksize=4096)
 sample_rate = 48000  # Hz
 channels = 2
 min_freq = 20  # Minimum audible frequency in Hz
-max_freq = 400  # Maximum frequency for visualization
+max_freq = 16000  # Maximum frequency for visualization
 height_scale = 4  # Scale factor for visualization
 polar_radial_distance_scale = 20.0
-polar_marker_size_scale = 20.0
+polar_marker_size_scale = 320.0
+background_color = 'white'
 
 visualization_title = 'Dancing Polar Visualizer'
 
@@ -106,7 +107,7 @@ with loopback:
     ax_polar.axis('off')
     
     # Set window properties
-    fig.patch.set_facecolor('white')
+    fig.patch.set_facecolor(background_color)
     plt.get_current_fig_manager().set_window_title(visualization_title)
     
     # Create animation
