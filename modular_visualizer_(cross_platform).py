@@ -2,6 +2,7 @@ import sys
 import requests
 from io import BytesIO
 import numpy as np
+import math
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import sounddevice as sd
@@ -18,6 +19,11 @@ from matplotlib.cm import ScalarMappable
 #  1) COMMON AUDIO MANAGER
 # --------------------------------------------------
 class AudioManager:
+    """
+    A cross-platform AudioManager using sounddevice.
+    It continuously records audio from the chosen device
+    and stores blocks in a thread-safe queue.
+    """
     def __init__(self, device=None, channels=1, samplerate=44100, blocksize=256):
         self.device = device
         self.channels = channels
@@ -33,6 +39,7 @@ class AudioManager:
         if status:
             print(f"Audio Manager Status: {status}", file=sys.stderr)
         block = indata.copy()
+        # Put the newest block into the queue
         self.audio_queue.put(block)
 
     def start(self):
@@ -61,8 +68,13 @@ class AudioManager:
                 self.audio_queue.get_nowait()
 
     def read_frames(self, num_frames=None):
+        """
+        Returns a numpy array of shape (frames, channels).
+        If no data is available, returns an empty array.
+
+        - Discard older blocks if multiple accumulate, so only the newest is used.
+        """
         with self.lock:
-            # Discard older blocks if multiple accumulate
             while self.audio_queue.qsize() > 1:
                 self.audio_queue.get_nowait()
 
@@ -106,6 +118,9 @@ class VisualizationBase:
 #  3) TITLE SCREEN CLASS
 # --------------------------------------------------
 class TitleScreen(VisualizationBase):
+    """
+    Displays a background image and usage instructions.
+    """
     def __init__(self, fig, audio_manager, image_url):
         super().__init__(fig, audio_manager)
         self.image_url = image_url
@@ -153,6 +168,7 @@ class TitleScreen(VisualizationBase):
             "Press 1 for Dancing Polar Visualizer\n"
             "Press 2 for 3D Wireframe Visualizer\n"
             "Press 3 for Propeller Arms Visualizer\n"
+            "Press 4 for Frequency Bar Chart\n"
             "Press '0' to come back here\n"
             "Press 'q' or 'Esc' to quit\n\n"
             "Press a letter key (A..Z) on this screen to select an input device\n"
@@ -382,7 +398,7 @@ class WireframeFFTVisualizer(VisualizationBase):
 
 
 # --------------------------------------------------
-#  7) NEW VISUALIZATION (PROPELLER ARMS) WITH SINE UNDULATION
+#  7) THIRD VISUALIZATION (PROPELLER ARMS)
 # --------------------------------------------------
 class PropellerArmsVisualizer(VisualizationBase):
     """
@@ -390,8 +406,10 @@ class PropellerArmsVisualizer(VisualizationBase):
 
     - The arms rotate around the center at a speed based on the dominant frequency.
     - Each arm's arc length depends on the volume (amplitude).
-    - The color of each dot cycles outward with turbo colormap at a rate based on freq.
-    - The radius of each dot has an added sine wave to create undulation.
+    - The color of each dot cycles outward with the turbo colormap at a rate based on freq.
+    - The radius of each dot has a sine-wave "undulation".
+    - The dot size increases with distance from the center.
+    - The overall radial extent is increased by 50%.
     """
 
     def __init__(self, fig, audio_manager):
@@ -403,24 +421,24 @@ class PropellerArmsVisualizer(VisualizationBase):
         self.min_freq = 20
 
         self.background_color = 'white'
-        # Rotation angle
+        # We'll track rotation, color, and sine wave phases.
         self.rotation_angle = 0.0
-        # Color phase
         self.color_phase = 0.0
-        # We'll also track a "sine wave" phase that changes each frame
         self.sine_phase = 0.0
 
+        # Create a polar Axes
         self.ax = self.fig.add_subplot(111, projection='polar')
         self.ax.set_visible(False)
         self.ax.axis('off')
         self.fig.patch.set_facecolor(self.background_color)
 
-        # Single scatter for all arms
+        # Create a single scatter plot
         self.scatter_plot = self.ax.scatter([], [])
-        self.ax.set_ylim(0, 1.0)  # We'll scale radius in code
+        # Increase the total radial limit to 1.5 (instead of 1.0) => 50% bigger
+        self.ax.set_ylim(0, 1.5)
 
         self.cmap = plt.get_cmap('turbo')
-        self.norm = Normalize(vmin=0, vmax=1)  # We'll map 0..1 to the colormap
+        self.norm = Normalize(vmin=0, vmax=1)
         self.scalar_map = ScalarMappable(norm=self.norm, cmap=self.cmap)
 
     def _get_dominant_frequency(self, fft_data, freq_axis):
@@ -432,6 +450,7 @@ class PropellerArmsVisualizer(VisualizationBase):
         if not self.active:
             return
 
+        # Read up to 512 frames from the queue
         audio_data = self.audio_manager.read_frames(num_frames=512)
         if audio_data.shape[0] < 1:
             return
@@ -439,6 +458,7 @@ class PropellerArmsVisualizer(VisualizationBase):
         mono = audio_data[:, 0]
         block_len = len(mono)
 
+        # Standard FFT logic
         fft_data = np.abs(np.fft.fft(mono))
         half_len = block_len // 2
         fft_data = fft_data[:half_len]
@@ -447,24 +467,24 @@ class PropellerArmsVisualizer(VisualizationBase):
         if fft_data.size == 0:
             return
 
-        # dominant freq
+        # 1) Dominant freq
         dom_freq = self._get_dominant_frequency(fft_data, freqs)
 
-        # rotation speed
+        # 2) rotation speed
         rotation_speed = np.clip(dom_freq / self.max_freq, 0.01, 0.2)
         self.rotation_angle += rotation_speed
 
-        # color cycle speed
+        # 3) color cycle speed
         color_speed = np.clip(dom_freq / self.max_freq, 0.02, 0.2)
         self.color_phase += color_speed
 
-        # wave speed for the sine undulation
+        # 4) wave speed for the sine undulation
         wave_speed = np.clip(dom_freq / self.max_freq, 0.02, 0.3)
         self.sine_phase += wave_speed
 
-        # amplitude
+        # 5) amplitude => sets the maximum arm radius
         amplitude = np.sum(fft_data) / fft_data.size
-        arc_radius = 0.5 + np.clip(amplitude / 200.0, 0, 0.5)
+        arc_radius = (0.5 + np.clip(amplitude / 200.0, 0, 0.5))* 2.75
 
         # We'll define how many points per arm
         points_per_arm = 30
@@ -473,11 +493,13 @@ class PropellerArmsVisualizer(VisualizationBase):
         angles = np.zeros(total_points)
         radii = np.zeros(total_points)
         color_vals = np.zeros(total_points)
+        sizes = np.zeros(total_points)
+
+        # Sine wave parameters
+        wave_ampl = 0.08
+        wave_stride = 0.5
 
         index = 0
-        # We'll also define wave_ampl for the sine wave
-        wave_ampl = 0.08  # how big the radial undulation is
-        wave_stride = 0.5  # how quickly the wave changes along each arm
         for i in range(self.num_arms):
             base_angle = 2.0 * np.pi * i / self.num_arms
             for j in range(points_per_arm):
@@ -487,27 +509,119 @@ class PropellerArmsVisualizer(VisualizationBase):
                 # base radius
                 base_r = frac * arc_radius
                 # add sine wave
-                # We'll do: r += wave_ampl * sin( sine_phase + j * wave_stride )
                 r_wave = wave_ampl * np.sin(self.sine_phase + j * wave_stride)
-                radii[index] = base_r + r_wave
+                final_r = base_r + r_wave
+                radii[index] = final_r
 
                 # color cycles outward with color_phase
                 cval = (self.color_phase + frac) % 1.0
                 color_vals[index] = cval
+
+                # Dot size grows with radius from center:
+                # e.g. base=20, scale=120 => bigger difference
+                sizes[index] = 20.0 + 240.0 * max(math.pow(final_r, 4), 0.0)
+
                 index += 1
 
-        # Convert color_vals with turbo colormap
+        # Convert color_vals to RGBA
         colors = self.scalar_map.to_rgba(color_vals)
 
+        # Update the scatter
         self.scatter_plot.set_offsets(np.c_[angles, radii])
         self.scatter_plot.set_color(colors)
-        self.scatter_plot.set_sizes(np.full(total_points, 40.0))
+        self.scatter_plot.set_sizes(sizes)
 
+
+# --------------------------------------------------
+#  8) NEW VISUALIZATION (FREQUENCY BAR CHART)
+# --------------------------------------------------
+class FrequencyBarChartVisualizer(VisualizationBase):
+    """
+    A simple bar chart showing frequency bins of the current audio signal.
+
+    - The FFT is split into n_bars bins (e.g. 32 or 64).
+    - Each bar's height corresponds to the amplitude in that bin.
+    - The bar's color is determined by its height (turbo colormap).
+    """
+    def __init__(self, fig, audio_manager):
+        super().__init__(fig, audio_manager)
+        self.samplerate = audio_manager.samplerate
+        self.min_freq = 20.0
+        self.max_freq = 8000.0
+        self.n_bars = 32  # number of bars (bins)
+
+        # Create a normal 2D axes
+        self.ax = self.fig.add_subplot(111)
+        self.ax.set_visible(False)
+        self.ax.set_facecolor('white')
+        self.ax.set_title("Frequency Bar Chart", color="black", fontsize=16)
+        self.ax.set_xlim(0, self.n_bars)
+        self.ax.set_ylim(0, 1)  # We can dynamically adjust or keep it [0..1]
+
+        # Pre-create the bars; initially all 0 height
+        self.x_data = np.arange(self.n_bars)
+        self.bar_container = self.ax.bar(self.x_data, np.zeros(self.n_bars), 
+                                         color='blue', width=0.8)
+
+        # Turbo colormap
+        self.cmap = plt.get_cmap('turbo')
+        self.norm = Normalize(vmin=0.0, vmax=1.0)  # for amplitude scaling
+        self.scalar_map = ScalarMappable(norm=self.norm, cmap=self.cmap)
+
+    def update_frame(self, frame):
+        if not self.active:
+            return
+
+        audio_data = self.audio_manager.read_frames(num_frames=1024)
+        if audio_data.shape[0] < 1:
+            return
+        mono = audio_data[:, 0]
+        block_len = len(mono)
+
+        # Compute the fft and freq axis
+        fft_data = np.abs(np.fft.fft(mono))
+        half_len = block_len // 2
+        fft_data = fft_data[:half_len]
+        freqs = np.fft.fftfreq(block_len, 1 / self.samplerate)[:half_len]
+
+        # Focus on range [min_freq..max_freq]
+        mask = (freqs >= self.min_freq) & (freqs <= self.max_freq)
+        freqs = freqs[mask]
+        fft_data = fft_data[mask]
+
+        if fft_data.size == 0:
+            return
+
+        # Build equal-width frequency bins across [min_freq..max_freq]
+        bin_edges = np.linspace(self.min_freq, self.max_freq, self.n_bars + 1)
+        bar_heights = np.zeros(self.n_bars, dtype=np.float32)
+
+        for i in range(self.n_bars):
+            low = bin_edges[i]
+            high = bin_edges[i+1]
+            bin_mask = (freqs >= low) & (freqs < high)
+            if np.any(bin_mask):
+                bar_heights[i] = np.mean(fft_data[bin_mask])
+
+        # Normalize bar_heights to [0..1] for convenience
+        max_val = np.max(bar_heights)
+        if max_val > 0:
+            bar_heights /= max_val
+
+        # Update the bars
+        for rect, h in zip(self.bar_container, bar_heights):
+            # Height
+            rect.set_height(h)
+            # Color via Turbo colormap
+            color_val = self.scalar_map.to_rgba(h)
+            rect.set_color(color_val)
+
+        # Optionally, adjust y-limits so bars fit nicely
         self.ax.set_ylim(0, 1.0)
 
 
 # --------------------------------------------------
-#  8) VISUALIZATION MANAGER
+#  9) VISUALIZATION MANAGER
 # --------------------------------------------------
 class VisualizationManager:
     def __init__(self):
@@ -541,11 +655,12 @@ class VisualizationManager:
         # Existing visualizations
         self.viz1 = DancingPolarVisualizer(self.fig, self.audio_manager)
         self.viz2 = WireframeFFTVisualizer(self.fig, self.audio_manager)
-
-        # NEW: "PropellerArmsVisualizer" with sine wave
         self.viz3 = PropellerArmsVisualizer(self.fig, self.audio_manager)
 
-        self.visualizations = [self.viz1, self.viz2, self.viz3]
+        # NEW: Fourth visualization "Frequency Bar Chart"
+        self.viz4 = FrequencyBarChartVisualizer(self.fig, self.audio_manager)
+
+        self.visualizations = [self.viz1, self.viz2, self.viz3, self.viz4]
 
         self.active_screen = self.title_screen
         self.active_screen.activate()
@@ -553,7 +668,7 @@ class VisualizationManager:
         self.anim = animation.FuncAnimation(
             self.fig,
             self.update,
-            interval=10,
+            interval=10,  # faster refresh
             blit=False
         )
 
@@ -576,13 +691,14 @@ class VisualizationManager:
                         self.audio_manager.device = dev_index
                         self.audio_manager.start()
 
-            # '3' => new PropellerArmsVisualizer
             if event.key == '1':
                 self.switch_to(self.viz1)
             elif event.key == '2':
                 self.switch_to(self.viz2)
             elif event.key == '3':
                 self.switch_to(self.viz3)
+            elif event.key == '4':
+                self.switch_to(self.viz4)
         else:
             if event.key == '1':
                 self.switch_to(self.viz1)
@@ -590,6 +706,8 @@ class VisualizationManager:
                 self.switch_to(self.viz2)
             elif event.key == '3':
                 self.switch_to(self.viz3)
+            elif event.key == '4':
+                self.switch_to(self.viz4)
             elif event.key == '0':
                 self.switch_to(self.title_screen)
 
@@ -617,11 +735,11 @@ class VisualizationManager:
 
 
 # --------------------------------------------------
-#  9) MAIN
+#  10) MAIN
 # --------------------------------------------------
 if __name__ == "__main__":
     manager = VisualizationManager()
-    print("Press '1' or '2' or '3' to switch from the splash screen to a visualization.")
+    print("Press '1', '2', '3', or '4' to switch from the splash screen to a visualization.")
     print("Press a letter key (A..Z) on the splash screen to select an input device (see list above).")
     print("Press '0' to return to the splash screen from a visualization.")
     print("Press 'q' or 'Esc' to quit.")
