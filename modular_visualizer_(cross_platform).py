@@ -784,6 +784,109 @@ class WaveformLineVisualizer(VisualizationBase):
 
 
 # --------------------------------------------------
+#  9) NEW VISUALIZATION: DANSETRON LETTERS
+# --------------------------------------------------
+class DansetronLettersVisualizer(VisualizationBase):
+    """
+    Displays the word 'DANSETRON' in large letters across the screen.
+    Each letter is colored according to a different FFT frequency bin.
+    """
+
+    def __init__(self, fig, audio_manager):
+        super().__init__(fig, audio_manager)
+
+        self.samplerate = audio_manager.samplerate
+        self.ax = self.fig.add_subplot(111)
+        self.ax.set_visible(False)
+        self.ax.axis('off')
+        self.fig.patch.set_facecolor('white')
+
+        # The word "DANSETRON" has 9 letters.
+        # We'll place them horizontally across the center of the figure.
+        # We'll define some x-coordinates for each letter, spaced out.
+        self.letters_str = "DANSETRON"
+        n_letters = len(self.letters_str)
+
+        # x positions from -4..+4, y=0
+        x_positions = np.linspace(-4, 4, n_letters)
+        self.letter_texts = []
+
+        for i, letter in enumerate(self.letters_str):
+            # Create a Text object for each letter
+            txt = self.ax.text(
+                x_positions[i], 0,
+                letter,
+                fontsize=80,      # big letters
+                fontweight='bold',
+                ha='center',
+                va='center',
+                color='white'     # default
+            )
+            self.letter_texts.append(txt)
+
+        # We'll define bin edges for 9 segments in [min_freq..max_freq]
+        self.min_freq = 20.0
+        self.max_freq = 8000.0
+        self.n_bins = n_letters
+        self.bin_edges = np.linspace(self.min_freq, self.max_freq, self.n_bins+1)
+
+        # We want no axis / ticks
+        self.ax.set_xlim(-5, 5)
+        self.ax.set_ylim(-1, 1)
+
+        # For coloring
+        self.cmap = plt.get_cmap('turbo')
+        self.norm = Normalize(vmin=0, vmax=1)
+        self.scalar_map = ScalarMappable(norm=self.norm, cmap=self.cmap)
+
+    def update_frame(self, frame):
+        if not self.active:
+            return
+
+        # 1) read frames
+        audio_data = self.audio_manager.read_frames(num_frames=1024)
+        if audio_data.shape[0] < 1:
+            return
+
+        mono = audio_data[:, 0]
+        block_len = len(mono)
+
+        # 2) compute FFT
+        fft_data = np.abs(np.fft.fft(mono))
+        half_len = block_len // 2
+        fft_data = fft_data[:half_len]
+        freqs = np.fft.fftfreq(block_len, 1 / self.samplerate)[:half_len]
+
+        # Only keep [min_freq..max_freq]
+        mask = (freqs >= self.min_freq) & (freqs <= self.max_freq)
+        freqs = freqs[mask]
+        fft_data = fft_data[mask]
+        if freqs.size < 1:
+            # nothing to show
+            return
+
+        # 3) Build amplitude bins for the 9 letters
+        bar_vals = np.zeros(self.n_bins, dtype=np.float32)
+        for i in range(self.n_bins):
+            low = self.bin_edges[i]
+            high = self.bin_edges[i+1]
+            bin_mask = (freqs >= low) & (freqs < high)
+            if np.any(bin_mask):
+                bar_vals[i] = np.mean(fft_data[bin_mask])
+
+        # 4) Normalize
+        max_val = np.max(bar_vals)
+        if max_val > 0:
+            bar_vals /= max_val
+
+        # 5) Assign each letter a color based on bar_vals[i]
+        for i, letter_txt in enumerate(self.letter_texts):
+            amplitude_fraction = bar_vals[i]
+            color = self.scalar_map.to_rgba(amplitude_fraction)
+            letter_txt.set_color(color)
+
+
+# --------------------------------------------------
 #  10) VISUALIZATION MANAGER
 # --------------------------------------------------
 class VisualizationManager:
@@ -815,18 +918,17 @@ class VisualizationManager:
         title_url = "https://soundvisualizations.blob.core.windows.net/media/2025.01.11-Apres_Ski_Party_Title.png"
         self.title_screen = TitleScreen(self.fig, self.audio_manager, title_url)
 
-        # Existing visualizations
+        # Visualizations
         self.viz1 = DancingPolarVisualizer(self.fig, self.audio_manager)
         self.viz2 = WireframeFFTVisualizer(self.fig, self.audio_manager)
         self.viz3 = PropellerArmsVisualizer(self.fig, self.audio_manager)
-
-        # Fourth: Mirrored Frequency Bar Chart
         self.viz4 = FrequencyBarChartVisualizer(self.fig, self.audio_manager)
-
-        # Fifth: Time Waveform Line Visualizer
         self.viz5 = WaveformLineVisualizer(self.fig, self.audio_manager)
+        
+        # The new DANSETRON Letters visualizer
+        self.viz6 = DansetronLettersVisualizer(self.fig, self.audio_manager)
 
-        self.visualizations = [self.viz1, self.viz2, self.viz3, self.viz4, self.viz5]
+        self.visualizations = [self.viz1, self.viz2, self.viz3, self.viz4, self.viz5, self.viz6]
 
         self.active_screen = self.title_screen
         self.active_screen.activate()
@@ -834,7 +936,7 @@ class VisualizationManager:
         self.anim = animation.FuncAnimation(
             self.fig,
             self.update,
-            interval=10,  # faster refresh
+            interval=10,
             blit=False
         )
 
@@ -867,6 +969,8 @@ class VisualizationManager:
                 self.switch_to(self.viz4)
             elif event.key == '5':
                 self.switch_to(self.viz5)
+            elif event.key == '6':
+                self.switch_to(self.viz6)
         else:
             if event.key == '1':
                 self.switch_to(self.viz1)
@@ -878,6 +982,8 @@ class VisualizationManager:
                 self.switch_to(self.viz4)
             elif event.key == '5':
                 self.switch_to(self.viz5)
+            elif event.key == '6':
+                self.switch_to(self.viz6)
             elif event.key == '0':
                 self.switch_to(self.title_screen)
 
@@ -903,15 +1009,13 @@ class VisualizationManager:
         plt.tight_layout()
         plt.show()
 
-
 # --------------------------------------------------
 #  11) MAIN
 # --------------------------------------------------
 if __name__ == "__main__":
     manager = VisualizationManager()
-    print("Press '1', '2', '3', or '4' to switch from the splash screen to a visualization.")
-    print("Press '5' to show the new Waveform Line Visualizer.")
-    print("Press a letter key (A..Z) on the splash screen to select an input device (see list above).")
+    print("Press '1'..'6' to switch from the splash screen to a visualization.")
+    print("Press a letter key (A..Z) on the splash screen to select an input device.")
     print("Press '0' to return to the splash screen from a visualization.")
     print("Press 'q' or 'Esc' to quit.")
     manager.show()
