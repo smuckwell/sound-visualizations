@@ -405,7 +405,15 @@ class WireframeFFTVisualizer(VisualizationBase):
 class PropellerArmsVisualizer(VisualizationBase):
     """
     A radial "propeller" style visualization with 12 arms.
+
+    - The arms rotate around the center at a speed based on the dominant frequency.
+    - Each arm's arc length depends on the volume (amplitude).
+    - The color of each dot cycles outward with the turbo colormap at a rate based on freq.
+    - The radius of each dot has a sine-wave "undulation".
+    - The dot size increases with distance from the center.
+    - The overall radial extent is increased by 50%.
     """
+
     def __init__(self, fig, audio_manager):
         super().__init__(fig, audio_manager)
 
@@ -415,17 +423,21 @@ class PropellerArmsVisualizer(VisualizationBase):
         self.min_freq = 20
 
         self.background_color = 'white'
-        # We'll track rotation, color, etc.
+        # We'll track rotation, color, and sine wave phases.
         self.rotation_angle = 0.0
         self.color_phase = 0.0
+        self.sine_phase = 0.0
 
+        # Create a polar Axes
         self.ax = self.fig.add_subplot(111, projection='polar')
         self.ax.set_visible(False)
         self.ax.axis('off')
         self.fig.patch.set_facecolor(self.background_color)
 
+        # Create a single scatter plot
         self.scatter_plot = self.ax.scatter([], [])
-        self.ax.set_ylim(0, 1.5)
+        # Increase the total radial limit to 1.5 (instead of 1.0) => 50% bigger
+        self.ax.set_ylim(0, 0.5)
 
         self.cmap = plt.get_cmap('turbo')
         self.norm = Normalize(vmin=0, vmax=1)
@@ -440,12 +452,15 @@ class PropellerArmsVisualizer(VisualizationBase):
         if not self.active:
             return
 
+        # Read up to 512 frames from the queue
         audio_data = self.audio_manager.read_frames(num_frames=512)
         if audio_data.shape[0] < 1:
             return
+
         mono = audio_data[:, 0]
         block_len = len(mono)
 
+        # Standard FFT logic
         fft_data = np.abs(np.fft.fft(mono))
         half_len = block_len // 2
         fft_data = fft_data[:half_len]
@@ -454,41 +469,69 @@ class PropellerArmsVisualizer(VisualizationBase):
         if fft_data.size == 0:
             return
 
+        # 1) Dominant freq
         dom_freq = self._get_dominant_frequency(fft_data, freqs)
+
+        # 2) rotation speed
         rotation_speed = np.clip(dom_freq / self.max_freq, 0.01, 0.2)
         self.rotation_angle += rotation_speed
 
+        # 3) color cycle speed
         color_speed = np.clip(dom_freq / self.max_freq, 0.02, 0.2)
         self.color_phase += color_speed
 
+        # 4) wave speed for the sine undulation
+        wave_speed = np.clip(dom_freq / self.max_freq, 0.02, 0.3)
+        self.sine_phase += wave_speed
+
+        # 5) amplitude => sets the maximum arm radius
         amplitude = np.sum(fft_data) / fft_data.size
         arc_radius = 0.5 + np.clip(amplitude / 200.0, 0, 0.5)
 
+        # We'll define how many points per arm
         points_per_arm = 30
         total_points = self.num_arms * points_per_arm
 
         angles = np.zeros(total_points)
         radii = np.zeros(total_points)
         color_vals = np.zeros(total_points)
+        sizes = np.zeros(total_points)
 
-        idx = 0
+        # Sine wave parameters
+        wave_ampl = 0.08
+        wave_stride = 0.5
+
+        index = 0
         for i in range(self.num_arms):
             base_angle = 2.0 * np.pi * i / self.num_arms
             for j in range(points_per_arm):
-                frac = j / (points_per_arm - 1)
-                angles[idx] = base_angle + self.rotation_angle
-                radii[idx] = frac * arc_radius
+                frac = j / (points_per_arm - 1)  # 0..1
+                angles[index] = base_angle + self.rotation_angle
 
+                # base radius
+                base_r = frac * arc_radius
+                # add sine wave
+                r_wave = wave_ampl * np.sin(self.sine_phase + j * wave_stride)
+                final_r = base_r + r_wave
+                radii[index] = final_r
+
+                # color cycles outward with color_phase
                 cval = (self.color_phase + frac) % 1.0
-                color_vals[idx] = cval
-                idx += 1
+                color_vals[index] = cval
 
+                # Dot size grows with radius from center:
+                # e.g. base=20, scale=120 => bigger difference
+                sizes[index] = 20.0 + 240.0 * max(math.pow(1 + final_r, 4), 0.0)
+
+                index += 1
+
+        # Convert color_vals to RGBA
         colors = self.scalar_map.to_rgba(color_vals)
 
+        # Update the scatter
         self.scatter_plot.set_offsets(np.c_[angles, radii])
         self.scatter_plot.set_color(colors)
-        self.scatter_plot.set_sizes(np.full(total_points, 40.0))
-
+        self.scatter_plot.set_sizes(sizes)
 
 # --------------------------------------------------
 #  8) UPDATED VISUALIZATION (FREQUENCY BAR CHART)
