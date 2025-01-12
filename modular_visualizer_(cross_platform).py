@@ -15,6 +15,7 @@ import string
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 from matplotlib.collections import LineCollection
+from matplotlib.transforms import Affine2D
 
 # --------------------------------------------------
 #  1) COMMON AUDIO MANAGER
@@ -158,14 +159,14 @@ class TitleScreen(VisualizationBase):
         top_y = 0.85
         self.ax.text(
             self.aspect_ratio / 2.0, top_y,
-            "APRÈS-SKI PARTY VISUALIZER",
+            "AUDIO VISUALIZER",
             color="white", ha="center", va="center",
             fontsize=24, fontweight='bold',
             zorder=10
         )
 
         self.instruction_text = self.ax.text(
-            self.aspect_ratio / 2.0, top_y - 0.15,
+            self.aspect_ratio / 2.0, top_y - 0.30,
             "Press 1 for Dancing Polar Visualizer\n"
             "Press 2 for 3D Wireframe Visualizer\n"
             "Press 3 for Propeller Arms Visualizer\n"
@@ -784,11 +785,11 @@ class WaveformLineVisualizer(VisualizationBase):
 
 
 # --------------------------------------------------
-#  9) NEW VISUALIZATION: DANSETRON LETTERS
+#  9) NEW VISUALIZATION: LETTERS
 # --------------------------------------------------
-class DansetronLettersVisualizer(VisualizationBase):
+class LettersVisualizer(VisualizationBase):
     """
-    Displays the word 'DANSETRON' in large letters across the screen.
+    Displays a word in large letters across the screen.
     Each letter is colored according to a different FFT frequency bin.
     """
 
@@ -801,10 +802,9 @@ class DansetronLettersVisualizer(VisualizationBase):
         self.ax.axis('off')
         self.fig.patch.set_facecolor('white')
 
-        # The word "DANSETRON" has 9 letters.
         # We'll place them horizontally across the center of the figure.
         # We'll define some x-coordinates for each letter, spaced out.
-        self.letters_str = "DANSETRON"
+        self.letters_str = "*DAMIEN* "
         n_letters = len(self.letters_str)
 
         # x positions from -4..+4, y=0
@@ -915,7 +915,7 @@ class VisualizationManager:
         self.audio_manager.start()
 
         # Title screen
-        title_url = "https://soundvisualizations.blob.core.windows.net/media/2025.01.11-Apres_Ski_Party_Title.png"
+        title_url = "https://soundvisualizations.blob.core.windows.net/media/demo_splashscreen_art.png"
         self.title_screen = TitleScreen(self.fig, self.audio_manager, title_url)
 
         # Visualizations
@@ -925,8 +925,8 @@ class VisualizationManager:
         self.viz4 = FrequencyBarChartVisualizer(self.fig, self.audio_manager)
         self.viz5 = WaveformLineVisualizer(self.fig, self.audio_manager)
         
-        # The new DANSETRON Letters visualizer
-        self.viz6 = DansetronLettersVisualizer(self.fig, self.audio_manager)
+        # The new Letters visualizer
+        self.viz6 = LettersVisualizer(self.fig, self.audio_manager)
 
         self.visualizations = [self.viz1, self.viz2, self.viz3, self.viz4, self.viz5, self.viz6]
 
@@ -941,7 +941,7 @@ class VisualizationManager:
         )
 
         self.cid_keypress = self.fig.canvas.mpl_connect("key_press_event", self.on_key_press)
-        self.fig.canvas.manager.set_window_title("Après-Ski Party Visualizer")
+        self.fig.canvas.manager.set_window_title("Audio Visualizer")
 
     def on_key_press(self, event):
         if event.key in ['q', 'escape']:
