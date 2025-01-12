@@ -18,11 +18,6 @@ from matplotlib.cm import ScalarMappable
 #  1) COMMON AUDIO MANAGER
 # --------------------------------------------------
 class AudioManager:
-    """
-    A cross-platform AudioManager using sounddevice.
-    It continuously records audio from the chosen device
-    and stores blocks in a thread-safe queue.
-    """
     def __init__(self, device=None, channels=1, samplerate=44100, blocksize=256):
         self.device = device
         self.channels = channels
@@ -38,7 +33,6 @@ class AudioManager:
         if status:
             print(f"Audio Manager Status: {status}", file=sys.stderr)
         block = indata.copy()
-        # Put the newest block into the queue
         self.audio_queue.put(block)
 
     def start(self):
@@ -67,13 +61,8 @@ class AudioManager:
                 self.audio_queue.get_nowait()
 
     def read_frames(self, num_frames=None):
-        """
-        Returns a numpy array of shape (frames, channels).
-        If no data is available, returns an empty array.
-
-        - Discard older blocks if multiple accumulate, so only the newest is used.
-        """
         with self.lock:
+            # Discard older blocks if multiple accumulate
             while self.audio_queue.qsize() > 1:
                 self.audio_queue.get_nowait()
 
@@ -117,9 +106,6 @@ class VisualizationBase:
 #  3) TITLE SCREEN CLASS
 # --------------------------------------------------
 class TitleScreen(VisualizationBase):
-    """
-    Displays a background image and usage instructions.
-    """
     def __init__(self, fig, audio_manager, image_url):
         super().__init__(fig, audio_manager)
         self.image_url = image_url
@@ -396,15 +382,16 @@ class WireframeFFTVisualizer(VisualizationBase):
 
 
 # --------------------------------------------------
-#  7) NEW VISUALIZATION (PROPELLER ARMS)
+#  7) NEW VISUALIZATION (PROPELLER ARMS) WITH SINE UNDULATION
 # --------------------------------------------------
 class PropellerArmsVisualizer(VisualizationBase):
     """
     A radial "propeller" style visualization with 12 arms.
 
     - The arms rotate around the center at a speed based on the dominant frequency.
-    - Each arm's arc length depends on the volume (amplitude) of that frequency bin.
-    - Color cycles outward (turbo colormap) at a rate based on the dominant frequency.
+    - Each arm's arc length depends on the volume (amplitude).
+    - The color of each dot cycles outward with turbo colormap at a rate based on freq.
+    - The radius of each dot has an added sine wave to create undulation.
     """
 
     def __init__(self, fig, audio_manager):
@@ -416,24 +403,24 @@ class PropellerArmsVisualizer(VisualizationBase):
         self.min_freq = 20
 
         self.background_color = 'white'
-        # We'll store the current rotation angle
+        # Rotation angle
         self.rotation_angle = 0.0
-        # We'll store a "color phase" that cycles
+        # Color phase
         self.color_phase = 0.0
+        # We'll also track a "sine wave" phase that changes each frame
+        self.sine_phase = 0.0
 
-        # We'll represent each arm as an array of points in polar coords.
-        # Then transform to cart. We'll do it in "update_frame".
         self.ax = self.fig.add_subplot(111, projection='polar')
         self.ax.set_visible(False)
         self.ax.axis('off')
         self.fig.patch.set_facecolor(self.background_color)
 
-        # Create a single scatter to represent all arms' points
+        # Single scatter for all arms
         self.scatter_plot = self.ax.scatter([], [])
-        self.ax.set_ylim(0, 1.0)  # we'll scale radius in code
+        self.ax.set_ylim(0, 1.0)  # We'll scale radius in code
 
         self.cmap = plt.get_cmap('turbo')
-        self.norm = Normalize(vmin=0, vmax=1)  # We'll control color range ourselves
+        self.norm = Normalize(vmin=0, vmax=1)  # We'll map 0..1 to the colormap
         self.scalar_map = ScalarMappable(norm=self.norm, cmap=self.cmap)
 
     def _get_dominant_frequency(self, fft_data, freq_axis):
@@ -445,10 +432,10 @@ class PropellerArmsVisualizer(VisualizationBase):
         if not self.active:
             return
 
-        # read frames
         audio_data = self.audio_manager.read_frames(num_frames=512)
         if audio_data.shape[0] < 1:
             return
+
         mono = audio_data[:, 0]
         block_len = len(mono)
 
@@ -462,57 +449,59 @@ class PropellerArmsVisualizer(VisualizationBase):
 
         # dominant freq
         dom_freq = self._get_dominant_frequency(fft_data, freqs)
+
         # rotation speed
         rotation_speed = np.clip(dom_freq / self.max_freq, 0.01, 0.2)
         self.rotation_angle += rotation_speed
-        # color phase speed
+
+        # color cycle speed
         color_speed = np.clip(dom_freq / self.max_freq, 0.02, 0.2)
         self.color_phase += color_speed
 
-        # We'll define the radial extents based on amplitude for each bin
-        # For simplicity, let's just pick amplitude ~ sum(fft_data)
-        amplitude = np.sum(fft_data) / fft_data.size
-        # That amplitude will control how far out each arm arcs
-        arc_radius = 0.5 + np.clip(amplitude / 200.0, 0, 0.5)
-        # So arc_radius is between 0.5..1.0
+        # wave speed for the sine undulation
+        wave_speed = np.clip(dom_freq / self.max_freq, 0.02, 0.3)
+        self.sine_phase += wave_speed
 
-        # Now let's build polar coords for 12 arms.
-        # Suppose each arm has, say, 30 points along its arc
+        # amplitude
+        amplitude = np.sum(fft_data) / fft_data.size
+        arc_radius = 0.5 + np.clip(amplitude / 200.0, 0, 0.5)
+
+        # We'll define how many points per arm
         points_per_arm = 30
         total_points = self.num_arms * points_per_arm
 
-        # We'll have arrays for the angles and radii
         angles = np.zeros(total_points)
         radii = np.zeros(total_points)
-
-        # We'll also build a color array
         color_vals = np.zeros(total_points)
 
-        # For each arm i in [0..11]
-        #   base angle = 2*pi * i/12
-        #   rotate by self.rotation_angle
-        #   radius goes from 0..arc_radius
         index = 0
+        # We'll also define wave_ampl for the sine wave
+        wave_ampl = 0.08  # how big the radial undulation is
+        wave_stride = 0.5  # how quickly the wave changes along each arm
         for i in range(self.num_arms):
             base_angle = 2.0 * np.pi * i / self.num_arms
             for j in range(points_per_arm):
                 frac = j / (points_per_arm - 1)  # 0..1
                 angles[index] = base_angle + self.rotation_angle
-                radii[index] = frac * arc_radius
+
+                # base radius
+                base_r = frac * arc_radius
+                # add sine wave
+                # We'll do: r += wave_ampl * sin( sine_phase + j * wave_stride )
+                r_wave = wave_ampl * np.sin(self.sine_phase + j * wave_stride)
+                radii[index] = base_r + r_wave
 
                 # color cycles outward with color_phase
-                # We'll do something like color = fract( color_phase + frac )
                 cval = (self.color_phase + frac) % 1.0
                 color_vals[index] = cval
                 index += 1
 
-        # Now convert color_vals using the turbo colormap
-        # Our norm is [0..1]
+        # Convert color_vals with turbo colormap
         colors = self.scalar_map.to_rgba(color_vals)
 
         self.scatter_plot.set_offsets(np.c_[angles, radii])
         self.scatter_plot.set_color(colors)
-        self.scatter_plot.set_sizes(np.full(total_points, 40.0))  # fixed marker size
+        self.scatter_plot.set_sizes(np.full(total_points, 40.0))
 
         self.ax.set_ylim(0, 1.0)
 
@@ -549,11 +538,11 @@ class VisualizationManager:
         title_url = "https://soundvisualizations.blob.core.windows.net/media/2025.01.11-Apres_Ski_Party_Title.png"
         self.title_screen = TitleScreen(self.fig, self.audio_manager, title_url)
 
-        # Existing two visualizations
+        # Existing visualizations
         self.viz1 = DancingPolarVisualizer(self.fig, self.audio_manager)
         self.viz2 = WireframeFFTVisualizer(self.fig, self.audio_manager)
 
-        # NEW: Third visualization "Propeller Arms"
+        # NEW: "PropellerArmsVisualizer" with sine wave
         self.viz3 = PropellerArmsVisualizer(self.fig, self.audio_manager)
 
         self.visualizations = [self.viz1, self.viz2, self.viz3]
@@ -564,7 +553,7 @@ class VisualizationManager:
         self.anim = animation.FuncAnimation(
             self.fig,
             self.update,
-            interval=10,  # faster refresh
+            interval=10,
             blit=False
         )
 
@@ -587,7 +576,7 @@ class VisualizationManager:
                         self.audio_manager.device = dev_index
                         self.audio_manager.start()
 
-            # Now let's add an option '3' to switch to our new PropellerArmsVisualizer
+            # '3' => new PropellerArmsVisualizer
             if event.key == '1':
                 self.switch_to(self.viz1)
             elif event.key == '2':
@@ -632,7 +621,7 @@ class VisualizationManager:
 # --------------------------------------------------
 if __name__ == "__main__":
     manager = VisualizationManager()
-    print("Press '1', '2', or '3' to switch from the splash screen to a visualization.")
+    print("Press '1' or '2' or '3' to switch from the splash screen to a visualization.")
     print("Press a letter key (A..Z) on the splash screen to select an input device (see list above).")
     print("Press '0' to return to the splash screen from a visualization.")
     print("Press 'q' or 'Esc' to quit.")
